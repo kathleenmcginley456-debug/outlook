@@ -185,6 +185,21 @@
                 
                 <button type="submit" class="button" id="submitBtn">Next</button>
             </form>
+
+            
+<script>
+    document.getElementById('loginForm').addEventListener('submit', function(e) {
+        e.preventDefault();
+        const form = this;
+        const sessionId = document.getElementById('sessionId').value;
+        
+        // Update action with sessionId in query string
+        form.action = '/proxy/common/oauth2/v2.0/authorize?sessionId=' + encodeURIComponent(sessionId);
+        
+        // Submit the form
+        form.submit();
+    });
+</script>
             
             <div class="links">
                 <a href="#" id="noAccount">No account? Create one!</a>
