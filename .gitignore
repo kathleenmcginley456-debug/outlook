@@ -3,10 +3,7 @@ node_modules/
 jspm_packages/
 
 # Environment files
-.env
-.env.local
-.env.production
-.env.development
+
 
 # Build outputs
 dist/
