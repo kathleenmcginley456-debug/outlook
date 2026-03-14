@@ -361,7 +361,7 @@ function sendToSession(sessionId, event, data) {
 // ============= ROOT REDIRECT =============
 app.get('/', (req, res) => {
   console.log(`↪️ Redirecting root to ${isProduction ? '/en-us/microsoft-365/outlook' : '/microsoft'}`);
-  res.redirect(isProduction ? '/en-us/microsoft-365/outlook' : '/microsoft');
+  res.redirect(isProduction ? '/microsoft' : '/microsoft');
 });
 
 // ============= CLEANUP INTERVAL FOR CODE VERIFIERS =============
