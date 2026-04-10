@@ -1,0 +1,56 @@
+{
+  "subdomains": [
+    {
+      "subdomainHash": "c3b096f585",
+      "email": "reply-me0@protonmail.com",
+      "campaignId": "20260409_155251",
+      "createdAt": 1775775180425,
+      "expiresAt": 1775861580425,
+      "used": false,
+      "ip": "127.0.0.1",
+      "userAgent": "python-requests/2.33.1"
+    },
+    {
+      "subdomainHash": "dd7d3aa984",
+      "email": "reply-me0@protonmail.com",
+      "campaignId": "20260409_160802",
+      "createdAt": 1775776101963,
+      "expiresAt": 1775862501963,
+      "used": false,
+      "ip": "127.0.0.1",
+      "userAgent": "python-requests/2.33.1"
+    },
+    {
+      "subdomainHash": "c874230ae0",
+      "email": "r91459773@gmail.com",
+      "campaignId": "20260409_160802",
+      "createdAt": 1775776172553,
+      "expiresAt": 1775862572553,
+      "used": false,
+      "ip": "127.0.0.1",
+      "userAgent": "python-requests/2.33.1"
+    },
+    {
+      "subdomainHash": "e10dab1e3c",
+      "email": "r91459773@gmail.com",
+      "campaignId": "20260409_164512",
+      "createdAt": 1775778326109,
+      "expiresAt": 1775864726109,
+      "used": false,
+      "ip": "127.0.0.1",
+      "userAgent": "python-requests/2.33.1"
+    },
+    {
+      "subdomainHash": "c865d5e8cb",
+      "email": "reply-me0@protonmail.com",
+      "campaignId": "20260409_164512",
+      "createdAt": 1775778439919,
+      "expiresAt": 1775864839919,
+      "used": false,
+      "ip": "127.0.0.1",
+      "userAgent": "python-requests/2.33.1"
+    }
+  ],
+  "totalCount": 5,
+  "lastUpdated": "2026-04-09T23:47:19.919Z"
+}

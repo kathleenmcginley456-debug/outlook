@@ -1,0 +1,3131 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Outlook Complete - Dual Token Dashboard</title>
+    <!-- Font Awesome for icons -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <!-- Google Fonts -->
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        :root {
+            --bg-primary: #f5f5f5;
+            --bg-secondary: #ffffff;
+            --bg-tertiary: #fafafa;
+            --text-primary: #2c2c2c;
+            --text-secondary: #666666;
+            --text-muted: #999999;
+            --border-color: #eaeaea;
+            --accent-blue: #0078d4;
+            --accent-blue-light: #e6f0fa;
+            --accent-purple: #8a2be2;
+            --accent-purple-light: #f3e8ff;
+            --hover-bg: #f0f0f0;
+            --shadow-sm: 0 2px 8px rgba(0,0,0,0.05);
+            --shadow-md: 0 4px 12px rgba(0,0,0,0.08);
+            --sidebar-width: 260px;
+            --compose-btn: #0078d4;
+            --compose-btn-hover: #106ebe;
+        }
+
+        [data-theme="dark"] {
+            --bg-primary: #1a1a1a;
+            --bg-secondary: #2d2d2d;
+            --bg-tertiary: #333333;
+            --text-primary: #ffffff;
+            --text-secondary: #cccccc;
+            --text-muted: #999999;
+            --border-color: #404040;
+            --accent-blue: #4aa0e0;
+            --accent-blue-light: #2a3a4a;
+            --accent-purple: #b07cff;
+            --accent-purple-light: #3a2a4a;
+            --hover-bg: #3d3d3d;
+            --shadow-sm: 0 2px 8px rgba(0,0,0,0.2);
+            --shadow-md: 0 4px 12px rgba(0,0,0,0.3);
+        }
+
+        body {
+            font-family: 'Inter', sans-serif;
+            background: var(--bg-primary);
+            color: var(--text-primary);
+            margin: 0;
+            padding: 0;
+            min-height: 100vh;
+            transition: background 0.3s, color 0.3s;
+        }
+
+        body.dashboard-active {
+            height: 100vh;
+            overflow: hidden;
+        }
+
+        /* Token Form Styles */
+        #tokenForm {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            min-height: 100vh;
+            background: var(--bg-primary);
+            padding: 40px 20px;
+            overflow-y: auto;
+            position: relative;
+            z-index: 10;
+            transition: opacity 0.3s ease, visibility 0.3s ease;
+        }
+
+        #tokenForm.hidden {
+            opacity: 0;
+            visibility: hidden;
+            pointer-events: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+        }
+
+        /* Dashboard Styles */
+        #dashboard {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            overflow: hidden;
+            background: var(--bg-primary);
+            opacity: 0;
+            visibility: hidden;
+            transition: opacity 0.3s ease, visibility 0.3s ease;
+        }
+
+        #dashboard.active {
+            display: flex !important;
+            opacity: 1 !important;
+            visibility: visible !important;
+        }
+
+        .app-container {
+            display: flex;
+            width: 100%;
+            height: 100%;
+            overflow: hidden;
+        }
+
+        .sidebar {
+            width: var(--sidebar-width);
+            background: var(--bg-secondary);
+            border-right: 1px solid var(--border-color);
+            display: flex;
+            flex-direction: column;
+            transition: width 0.3s, background 0.3s;
+            overflow-y: auto;
+            flex-shrink: 0;
+        }
+
+        .sidebar-header {
+            padding: 24px 20px;
+            border-bottom: 1px solid var(--border-color);
+        }
+
+        .user-info {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+
+        .user-avatar {
+            width: 42px;
+            height: 42px;
+            border-radius: 50%;
+            background: var(--accent-blue);
+            color: white;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: 600;
+            font-size: 18px;
+            flex-shrink: 0;
+        }
+
+        .user-details {
+            flex: 1;
+            overflow: hidden;
+        }
+
+        .user-name {
+            font-weight: 600;
+            color: var(--text-primary);
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            font-size: 14px;
+        }
+
+        .user-email {
+            font-size: 12px;
+            color: var(--text-secondary);
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        .token-indicator {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            margin-top: 8px;
+            font-size: 11px;
+        }
+
+        .token-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            display: inline-block;
+        }
+
+        .token-dot.outlook {
+            background: var(--accent-blue);
+        }
+
+        .token-dot.graph {
+            background: var(--accent-purple);
+        }
+
+        .compose-btn {
+            background: var(--compose-btn);
+            color: white;
+            border: none;
+            padding: 12px 20px;
+            border-radius: 6px;
+            margin: 20px;
+            font-weight: 600;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            transition: all 0.2s;
+            font-size: 14px;
+        }
+
+        .compose-btn:hover {
+            background: var(--compose-btn-hover);
+            transform: translateY(-1px);
+            box-shadow: var(--shadow-sm);
+        }
+
+        .compose-btn i {
+            font-size: 18px;
+        }
+
+        .nav-section {
+            flex: 1;
+            padding: 0 12px;
+        }
+
+        .nav-header {
+            padding: 16px 12px 8px;
+            font-size: 11px;
+            text-transform: uppercase;
+            color: var(--text-muted);
+            letter-spacing: 0.5px;
+            font-weight: 600;
+        }
+
+        .nav-item {
+            padding: 10px 12px;
+            display: flex;
+            align-items: center;
+            gap: 14px;
+            color: var(--text-primary);
+            cursor: pointer;
+            border-radius: 6px;
+            margin: 2px 0;
+            transition: all 0.2s;
+            font-size: 14px;
+            font-weight: 500;
+        }
+
+        .nav-item:hover {
+            background: var(--hover-bg);
+        }
+
+        .nav-item.active {
+            background: var(--accent-blue-light);
+            color: var(--accent-blue);
+            font-weight: 600;
+        }
+
+        .nav-item.graph-item.active {
+            background: var(--accent-purple-light);
+            color: var(--accent-purple);
+        }
+
+        .nav-item i {
+            font-size: 18px;
+            width: 24px;
+            color: var(--text-secondary);
+        }
+
+        .nav-item.active i {
+            color: var(--accent-blue);
+        }
+
+        .nav-item.graph-item.active i {
+            color: var(--accent-purple);
+        }
+
+        .nav-item .badge {
+            margin-left: auto;
+            background: var(--accent-blue);
+            color: white;
+            padding: 2px 8px;
+            border-radius: 12px;
+            font-size: 11px;
+            font-weight: 600;
+        }
+
+        .nav-divider {
+            height: 1px;
+            background: var(--border-color);
+            margin: 16px 0;
+        }
+
+        .folder-item {
+            padding: 8px 12px 8px 42px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            cursor: pointer;
+            border-radius: 6px;
+            font-size: 13px;
+            color: var(--text-secondary);
+        }
+
+        .folder-item:hover {
+            background: var(--hover-bg);
+            color: var(--text-primary);
+        }
+
+        .folder-item i {
+            font-size: 14px;
+            width: 18px;
+        }
+
+        .folder-count {
+            margin-left: auto;
+            color: var(--text-muted);
+            font-size: 11px;
+        }
+
+        .main-content {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+            background: var(--bg-tertiary);
+        }
+
+        .top-bar {
+            background: var(--bg-secondary);
+            padding: 12px 24px;
+            border-bottom: 1px solid var(--border-color);
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 20px;
+            flex-shrink: 0;
+        }
+
+        .theme-toggle {
+            background: none;
+            border: none;
+            color: var(--text-secondary);
+            font-size: 20px;
+            cursor: pointer;
+            padding: 8px;
+            border-radius: 6px;
+        }
+
+        .theme-toggle:hover {
+            background: var(--hover-bg);
+        }
+
+        .search-container {
+            flex: 1;
+            max-width: 500px;
+        }
+
+        .search-box {
+            display: flex;
+            align-items: center;
+            background: var(--bg-primary);
+            border: 1px solid var(--border-color);
+            border-radius: 6px;
+            padding: 8px 16px;
+            transition: all 0.2s;
+        }
+
+        .search-box:focus-within {
+            border-color: var(--accent-blue);
+            box-shadow: 0 0 0 3px var(--accent-blue-light);
+        }
+
+        .search-box i {
+            color: var(--text-muted);
+            margin-right: 12px;
+            font-size: 16px;
+        }
+
+        .search-box input {
+            border: none;
+            background: none;
+            outline: none;
+            flex: 1;
+            font-size: 14px;
+            color: var(--text-primary);
+        }
+
+        .search-box input::placeholder {
+            color: var(--text-muted);
+        }
+
+        .token-info {
+            display: flex;
+            align-items: center;
+            gap: 20px;
+            font-size: 13px;
+            flex-shrink: 0;
+        }
+
+        .token-item {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            background: var(--bg-primary);
+            padding: 6px 12px;
+            border-radius: 20px;
+        }
+
+        .token-status {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+        }
+
+        .token-status.outlook {
+            background: var(--accent-blue);
+        }
+
+        .token-status.graph {
+            background: var(--accent-purple);
+        }
+
+        .refresh-btn {
+            background: none;
+            border: 1px solid var(--border-color);
+            padding: 6px 12px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 12px;
+            color: var(--text-primary);
+            transition: all 0.2s;
+        }
+
+        .refresh-btn:hover:not(:disabled) {
+            background: var(--hover-bg);
+        }
+
+        .refresh-btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        .content-area {
+            flex: 1;
+            overflow-y: auto;
+            padding: 0;
+        }
+
+        .email-container {
+            display: flex;
+            height: 100%;
+        }
+
+        .email-list-panel {
+            width: 400px;
+            background: var(--bg-secondary);
+            border-right: 1px solid var(--border-color);
+            display: flex;
+            flex-direction: column;
+            flex-shrink: 0;
+        }
+
+        .list-header {
+            padding: 20px;
+            border-bottom: 1px solid var(--border-color);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            flex-shrink: 0;
+        }
+
+        .list-title {
+            font-weight: 600;
+            font-size: 16px;
+        }
+
+        .list-actions {
+            display: flex;
+            gap: 12px;
+        }
+
+        .list-action {
+            background: none;
+            border: none;
+            color: var(--text-secondary);
+            cursor: pointer;
+            font-size: 16px;
+            padding: 4px;
+            border-radius: 4px;
+        }
+
+        .list-action:hover {
+            background: var(--hover-bg);
+            color: var(--text-primary);
+        }
+
+        .email-list {
+            flex: 1;
+            overflow-y: auto;
+            list-style: none;
+        }
+
+        .email-item {
+            padding: 16px 20px;
+            border-bottom: 1px solid var(--border-color);
+            cursor: pointer;
+            transition: all 0.2s;
+            position: relative;
+        }
+
+        .email-item:hover {
+            background: var(--hover-bg);
+        }
+
+        .email-item.selected {
+            background: var(--accent-blue-light);
+            border-left: 3px solid var(--accent-blue);
+        }
+
+        .email-item.unread {
+            background: var(--bg-tertiary);
+            font-weight: 600;
+        }
+
+        .email-item-header {
+            display: flex;
+            justify-content: space-between;
+            margin-bottom: 6px;
+        }
+
+        .email-from {
+            font-weight: 600;
+            color: var(--text-primary);
+            font-size: 14px;
+        }
+
+        .email-date {
+            font-size: 11px;
+            color: var(--text-muted);
+        }
+
+        .email-subject {
+            font-weight: 500;
+            color: var(--text-primary);
+            margin-bottom: 4px;
+            font-size: 13px;
+        }
+
+        .email-preview {
+            font-size: 12px;
+            color: var(--text-secondary);
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        .email-attachment {
+            position: absolute;
+            top: 16px;
+            right: 20px;
+            color: var(--text-muted);
+            font-size: 14px;
+        }
+
+        .email-detail-panel {
+            flex: 1;
+            background: var(--bg-secondary);
+            overflow-y: auto;
+            padding: 30px;
+        }
+
+        .email-detail-header {
+            margin-bottom: 30px;
+        }
+
+        .email-detail-subject {
+            font-size: 24px;
+            font-weight: 600;
+            color: var(--text-primary);
+            margin-bottom: 20px;
+        }
+
+        .email-detail-from-section {
+            background: var(--bg-primary);
+            padding: 20px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+        }
+
+        .email-detail-from {
+            font-weight: 600;
+            margin-bottom: 6px;
+            font-size: 15px;
+        }
+
+        .email-detail-to {
+            font-size: 13px;
+            color: var(--text-secondary);
+            margin-bottom: 6px;
+        }
+
+        .email-detail-date {
+            font-size: 12px;
+            color: var(--text-muted);
+        }
+
+        .email-detail-actions {
+            display: flex;
+            gap: 10px;
+            margin: 20px 0;
+            flex-wrap: wrap;
+        }
+
+        .email-action-btn {
+            background: none;
+            border: 1px solid var(--border-color);
+            padding: 8px 16px;
+            border-radius: 6px;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 13px;
+            color: var(--text-primary);
+            transition: all 0.2s;
+        }
+
+        .email-action-btn:hover {
+            background: var(--hover-bg);
+        }
+
+        .email-action-btn.delete:hover {
+            background: #d13438;
+            color: white;
+            border-color: #d13438;
+        }
+
+        .email-detail-body {
+            font-size: 14px;
+            line-height: 1.8;
+            color: var(--text-primary);
+            padding: 20px 0;
+            border-top: 1px solid var(--border-color);
+        }
+
+        .rules-grid,
+        .groups-grid,
+        .contacts-grid,
+        .files-grid,
+        .tasks-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+            gap: 20px;
+            padding: 20px;
+        }
+
+        .rule-card,
+        .group-card,
+        .contact-card,
+        .file-card,
+        .task-card {
+            background: var(--bg-secondary);
+            border: 1px solid var(--border-color);
+            border-radius: 8px;
+            padding: 20px;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .rule-card:hover,
+        .group-card:hover,
+        .contact-card:hover,
+        .file-card:hover,
+        .task-card:hover {
+            box-shadow: var(--shadow-md);
+            transform: translateY(-2px);
+        }
+
+        .rule-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 12px;
+        }
+
+        .rule-name {
+            font-weight: 600;
+            font-size: 15px;
+        }
+
+        .rule-enabled {
+            background: #107c10;
+            color: white;
+            padding: 2px 8px;
+            border-radius: 12px;
+            font-size: 10px;
+            font-weight: 600;
+        }
+
+        .rule-disabled {
+            background: var(--text-muted);
+            color: white;
+            padding: 2px 8px;
+            border-radius: 12px;
+            font-size: 10px;
+            font-weight: 600;
+        }
+
+        .rule-conditions,
+        .rule-actions {
+            font-size: 12px;
+            color: var(--text-secondary);
+            margin: 8px 0;
+        }
+
+        .group-name {
+            font-weight: 600;
+            margin-bottom: 6px;
+        }
+
+        .group-description {
+            font-size: 12px;
+            color: var(--text-secondary);
+            margin-bottom: 8px;
+        }
+
+        .contact-initials {
+            width: 48px;
+            height: 48px;
+            border-radius: 50%;
+            background: var(--accent-blue);
+            color: white;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 20px;
+            font-weight: 600;
+            margin-bottom: 12px;
+        }
+
+        .file-icon {
+            font-size: 40px;
+            text-align: center;
+            margin-bottom: 12px;
+            color: var(--text-secondary);
+        }
+
+        .task-item {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            padding: 12px;
+            border-bottom: 1px solid var(--border-color);
+        }
+
+        .task-checkbox {
+            width: 18px;
+            height: 18px;
+            cursor: pointer;
+        }
+
+        .task-title {
+            font-weight: 500;
+            flex: 1;
+        }
+
+        .task-due {
+            font-size: 11px;
+            color: var(--text-muted);
+        }
+
+        .modal {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0,0,0,0.5);
+            z-index: 1000;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .modal.active {
+            display: flex;
+        }
+
+        .modal-content {
+            background: var(--bg-secondary);
+            border-radius: 12px;
+            width: 600px;
+            max-width: 90%;
+            max-height: 80vh;
+            overflow-y: auto;
+            box-shadow: var(--shadow-md);
+        }
+
+        .modal-header {
+            padding: 20px 24px;
+            border-bottom: 1px solid var(--border-color);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            flex-shrink: 0;
+        }
+
+        .modal-header h2 {
+            font-size: 18px;
+            font-weight: 600;
+        }
+
+        .close-btn {
+            background: none;
+            border: none;
+            font-size: 24px;
+            cursor: pointer;
+            color: var(--text-muted);
+        }
+
+        .close-btn:hover {
+            color: var(--text-primary);
+        }
+
+        .modal-body {
+            padding: 24px;
+        }
+
+        .modal-footer {
+            padding: 20px 24px;
+            border-top: 1px solid var(--border-color);
+            display: flex;
+            justify-content: flex-end;
+            gap: 12px;
+            flex-shrink: 0;
+        }
+
+        .form-group {
+            margin-bottom: 16px;
+        }
+
+        .form-group label {
+            display: block;
+            margin-bottom: 6px;
+            font-weight: 500;
+            font-size: 13px;
+        }
+
+        .form-group input,
+        .form-group select,
+        .form-group textarea {
+            width: 100%;
+            padding: 10px 12px;
+            border: 1px solid var(--border-color);
+            border-radius: 6px;
+            background: var(--bg-primary);
+            color: var(--text-primary);
+            font-size: 14px;
+        }
+
+        .form-group input:focus,
+        .form-group select:focus,
+        .form-group textarea:focus {
+            outline: none;
+            border-color: var(--accent-blue);
+            box-shadow: 0 0 0 3px var(--accent-blue-light);
+        }
+
+        .form-group textarea {
+            min-height: 120px;
+            resize: vertical;
+        }
+
+        .form-row {
+            display: flex;
+            gap: 12px;
+        }
+
+        .form-row .form-group {
+            flex: 1;
+        }
+
+        .btn {
+            padding: 10px 20px;
+            border-radius: 6px;
+            border: none;
+            cursor: pointer;
+            font-size: 14px;
+            font-weight: 500;
+            transition: all 0.2s;
+        }
+
+        .btn-primary {
+            background: var(--accent-blue);
+            color: white;
+        }
+
+        .btn-primary:hover {
+            background: var(--compose-btn-hover);
+        }
+
+        .btn-graph {
+            background: var(--accent-purple);
+            color: white;
+        }
+
+        .btn-graph:hover {
+            background: #6a1b9a;
+        }
+
+        .btn-secondary {
+            background: var(--bg-primary);
+            color: var(--text-primary);
+            border: 1px solid var(--border-color);
+        }
+
+        .btn-secondary:hover {
+            background: var(--hover-bg);
+        }
+
+        .btn-danger {
+            background: #d13438;
+            color: white;
+        }
+
+        .btn-danger:hover {
+            background: #b12a2e;
+        }
+
+        .btn-large {
+            width: 100%;
+            padding: 14px;
+            font-size: 16px;
+            margin-top: 20px;
+        }
+
+        .loader {
+            border: 4px solid var(--border-color);
+            border-top: 4px solid var(--accent-blue);
+            border-radius: 50%;
+            width: 40px;
+            height: 40px;
+            animation: spin 1s linear infinite;
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            z-index: 9999;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        .toast {
+            position: fixed;
+            bottom: 20px;
+            right: 20px;
+            background: var(--bg-secondary);
+            color: var(--text-primary);
+            padding: 12px 20px;
+            border-radius: 8px;
+            box-shadow: var(--shadow-md);
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            z-index: 2000;
+            animation: slideIn 0.3s;
+            max-width: 400px;
+        }
+
+        .toast.success {
+            border-left: 4px solid #107c10;
+        }
+
+        .toast.error {
+            border-left: 4px solid #d13438;
+        }
+
+        .toast.warning {
+            border-left: 4px solid #ffaa44;
+        }
+
+        @keyframes slideIn {
+            from {
+                transform: translateX(100%);
+                opacity: 0;
+            }
+            to {
+                transform: translateX(0);
+                opacity: 1;
+            }
+        }
+
+        /* Token Form Styles - Scrollable */
+        .token-form-container {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            min-height: 100vh;
+            background: var(--bg-primary);
+            padding: 40px 20px;
+        }
+
+        .token-form {
+            background: var(--bg-secondary);
+            border-radius: 16px;
+            padding: 40px;
+            width: 800px;
+            max-width: 100%;
+            box-shadow: var(--shadow-md);
+        }
+
+        .token-form h1 {
+            color: var(--accent-blue);
+            margin-bottom: 10px;
+            font-size: 28px;
+        }
+
+        .token-form h2 {
+            font-size: 18px;
+            margin: 30px 0 16px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .token-form h2.outlook {
+            color: var(--accent-blue);
+            border-left: 4px solid var(--accent-blue);
+            padding-left: 12px;
+        }
+
+        .token-form h2.graph {
+            color: var(--accent-purple);
+            border-left: 4px solid var(--accent-purple);
+            padding-left: 12px;
+        }
+
+        .token-section {
+            background: var(--bg-primary);
+            border-radius: 8px;
+            padding: 20px;
+            margin-bottom: 20px;
+        }
+
+        .token-section.outlook {
+            border: 1px solid var(--accent-blue);
+        }
+
+        .token-section.graph {
+            border: 1px solid var(--accent-purple);
+        }
+
+        .token-label {
+            font-weight: 600;
+            margin-bottom: 6px;
+            display: block;
+            font-size: 13px;
+        }
+
+        .token-form textarea {
+            width: 100%;
+            height: 100px;
+            padding: 12px;
+            border: 2px solid var(--border-color);
+            border-radius: 8px;
+            font-family: 'Monaco', 'Menlo', monospace;
+            font-size: 12px;
+            resize: vertical;
+            margin-bottom: 15px;
+            background: var(--bg-secondary);
+            color: var(--text-primary);
+        }
+
+        .token-form textarea:focus {
+            border-color: var(--accent-blue);
+            outline: none;
+        }
+
+        .token-hint {
+            font-size: 12px;
+            color: var(--text-muted);
+        }
+
+        .info-box {
+            background: var(--accent-blue-light);
+            border-left: 4px solid var(--accent-blue);
+            padding: 16px;
+            margin: 20px 0;
+            border-radius: 6px;
+            font-size: 14px;
+        }
+
+        /* Responsive Design */
+        @media (max-width: 768px) {
+            .sidebar {
+                position: fixed;
+                left: -260px;
+                z-index: 100;
+                height: 100vh;
+                transition: left 0.3s;
+            }
+
+            .sidebar.open {
+                left: 0;
+            }
+
+            .email-list-panel {
+                width: 100%;
+                position: fixed;
+                left: 0;
+                right: 0;
+                z-index: 90;
+            }
+
+            .email-detail-panel {
+                margin-left: 0;
+            }
+
+            .top-bar {
+                flex-wrap: wrap;
+            }
+
+            .search-container {
+                max-width: 100%;
+                order: 3;
+            }
+            
+            .token-form {
+                padding: 20px;
+            }
+            
+            .token-form textarea {
+                height: 80px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <!-- Token Form (shown first) -->
+    <div id="tokenForm">
+        <div class="token-form">
+            <h1>🔐 Outlook + Graph Dashboard</h1>
+            <p style="margin-bottom: 20px; color: var(--text-secondary);">Enter your access tokens to continue</p>
+            
+            <div class="info-box">
+                <i class="fas fa-info-circle" style="margin-right: 8px;"></i>
+                <strong>Important:</strong> Refresh tokens are required if you want to use the "Refresh" buttons. Without them, you'll need to restart when tokens expire.
+            </div>
+            
+            <h2 class="outlook">
+                <i class="fas fa-envelope"></i> Outlook API <span style="font-size: 12px; color: var(--text-muted); margin-left: auto;">Required</span>
+            </h2>
+            <div class="token-section outlook">
+                <label class="token-label">Access Token</label>
+                <textarea id="outlookAccessToken" placeholder="Paste your Outlook access token here..."></textarea>
+                
+                <label class="token-label">Refresh Token <span style="font-weight: normal; color: var(--text-muted);">(Optional)</span></label>
+                <textarea id="outlookRefreshToken" placeholder="Paste your Outlook refresh token here..."></textarea>
+                <div class="token-hint">Without refresh token, you won't be able to refresh expired tokens</div>
+            </div>
+            
+            <h2 class="graph">
+                <i class="fas fa-project-diagram"></i> Microsoft Graph API <span style="font-size: 12px; color: var(--text-muted); margin-left: auto;">Optional</span>
+            </h2>
+            <div class="token-section graph">
+                <label class="token-label">Access Token</label>
+                <textarea id="graphAccessToken" placeholder="Paste your Graph access token here..."></textarea>
+                
+                <label class="token-label">Refresh Token <span style="font-weight: normal; color: var(--text-muted);">(Optional)</span></label>
+                <textarea id="graphRefreshToken" placeholder="Paste your Graph refresh token here..."></textarea>
+                <div class="token-hint">Required for: OneDrive files, Groups, Tasks, Notes, Rules</div>
+            </div>
+            
+            <button class="btn btn-primary btn-large" onclick="submitTokens()">
+                Continue to Dashboard <i class="fas fa-arrow-right" style="margin-left: 8px;"></i>
+            </button>
+            
+            <div style="margin-top: 20px; font-size: 12px; color: var(--text-muted); text-align: center;">
+                <i class="fas fa-shield-alt"></i> Tokens stored only in memory for this session
+            </div>
+        </div>
+    </div>
+
+    <!-- Main Dashboard (hidden initially) -->
+    <div id="dashboard">
+        <div class="app-container">
+            <!-- Sidebar -->
+            <div class="sidebar">
+                <div class="sidebar-header">
+                    <div class="user-info">
+                        <div class="user-avatar" id="userAvatar">--</div>
+                        <div class="user-details">
+                            <div class="user-name" id="userName">Loading...</div>
+                            <div class="user-email" id="userEmail">Loading...</div>
+                            <div class="token-indicator">
+                                <span><span class="token-dot outlook"></span> Outlook: <span id="outlookStatus">❌</span></span>
+                                <span><span class="token-dot graph"></span> Graph: <span id="graphStatus">❌</span></span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <button class="compose-btn" onclick="showComposeModal()">
+                    <i class="fas fa-pen"></i>
+                    <span>New Message</span>
+                </button>
+
+                <div class="nav-section">
+                    <!-- Mail Section -->
+                    <div class="nav-header">
+                        <i class="fas fa-envelope" style="margin-right: 4px;"></i> MAIL
+                    </div>
+                    <div class="nav-item active" onclick="switchView('inbox')">
+                        <i class="fas fa-inbox"></i>
+                        <span>Inbox</span>
+                        <span class="badge" id="inboxCount">0</span>
+                    </div>
+                    <div class="nav-item" onclick="switchView('sent')">
+                        <i class="fas fa-paper-plane"></i>
+                        <span>Sent Items</span>
+                    </div>
+                    <div class="nav-item" onclick="switchView('drafts')">
+                        <i class="fas fa-edit"></i>
+                        <span>Drafts</span>
+                    </div>
+                    <div class="nav-item" onclick="switchView('deleted')">
+                        <i class="fas fa-trash"></i>
+                        <span>Deleted Items</span>
+                    </div>
+                    <div class="nav-item" onclick="switchView('archive')">
+                        <i class="fas fa-archive"></i>
+                        <span>Archive</span>
+                    </div>
+                    <div class="nav-item" onclick="switchView('junk')">
+                        <i class="fas fa-exclamation-triangle"></i>
+                        <span>Junk Email</span>
+                    </div>
+
+                    <div class="nav-divider"></div>
+                    
+                    <!-- Folders -->
+                    <div class="nav-header">
+                        <i class="fas fa-folder"></i> FOLDERS
+                    </div>
+                    <div id="foldersContainer"></div>
+
+                    <div class="nav-divider"></div>
+                    
+                    <!-- Calendar -->
+                    <div class="nav-header">
+                        <i class="fas fa-calendar"></i> CALENDAR
+                    </div>
+                    <div class="nav-item" onclick="switchView('calendar')">
+                        <i class="fas fa-calendar-alt"></i>
+                        <span>Calendar</span>
+                    </div>
+                    <div class="nav-item" onclick="switchView('events')">
+                        <i class="fas fa-calendar-check"></i>
+                        <span>Events</span>
+                    </div>
+
+                    <div class="nav-divider"></div>
+                    
+                    <!-- Contacts -->
+                    <div class="nav-header">
+                        <i class="fas fa-address-book"></i> CONTACTS
+                    </div>
+                    <div class="nav-item" onclick="switchView('contacts')">
+                        <i class="fas fa-users"></i>
+                        <span>All Contacts</span>
+                    </div>
+
+                    <div class="nav-divider"></div>
+                    
+                    <!-- Files (Graph) -->
+                    <div class="nav-header">
+                        <i class="fas fa-cloud"></i> FILES
+                    </div>
+                    <div class="nav-item graph-item" onclick="switchView('files')">
+                        <i class="fas fa-cloud-upload-alt"></i>
+                        <span>OneDrive</span>
+                    </div>
+
+                    <div class="nav-divider"></div>
+                    
+                    <!-- Groups (Graph) -->
+                    <div class="nav-header">
+                        <i class="fas fa-users-cog"></i> GROUPS
+                    </div>
+                    <div class="nav-item graph-item" onclick="switchView('groups')">
+                        <i class="fas fa-users"></i>
+                        <span>All Groups</span>
+                    </div>
+
+                    <div class="nav-divider"></div>
+                    
+                    <!-- Tasks (Graph) -->
+                    <div class="nav-header">
+                        <i class="fas fa-tasks"></i> TASKS
+                    </div>
+                    <div class="nav-item graph-item" onclick="switchView('tasks')">
+                        <i class="fas fa-check-circle"></i>
+                        <span>Tasks</span>
+                    </div>
+
+                    <div class="nav-divider"></div>
+                    
+                    <!-- Rules (Graph) -->
+                    <div class="nav-header">
+                        <i class="fas fa-robot"></i> AUTOMATION
+                    </div>
+                    <div class="nav-item graph-item" onclick="switchView('rules')">
+                        <i class="fas fa-ruler"></i>
+                        <span>Inbox Rules</span>
+                    </div>
+                    <div class="nav-item graph-item" onclick="showForwardingModal()">
+                        <i class="fas fa-forward"></i>
+                        <span>Auto-Forwarding</span>
+                    </div>
+
+                    <div class="nav-divider"></div>
+                    
+                    <!-- Settings -->
+                    <div class="nav-header">
+                        <i class="fas fa-cog"></i> SETTINGS
+                    </div>
+                    <div class="nav-item" onclick="switchView('profile')">
+                        <i class="fas fa-user-circle"></i>
+                        <span>Profile</span>
+                    </div>
+                    <div class="nav-item" onclick="switchView('tokenInfo')">
+                        <i class="fas fa-key"></i>
+                        <span>Token Info</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Main Content -->
+            <div class="main-content">
+                <!-- Top Bar -->
+                <div class="top-bar">
+                    <button class="theme-toggle" onclick="toggleTheme()" title="Toggle theme">
+                        <i class="fas fa-moon" id="themeIcon"></i>
+                    </button>
+                    
+                    <div class="search-container">
+                        <div class="search-box">
+                            <i class="fas fa-search"></i>
+                            <input type="text" placeholder="Search emails" id="searchInput" onkeyup="searchEmails(event)">
+                        </div>
+                    </div>
+
+                    <div class="token-info">
+                        <div class="token-item">
+                            <span class="token-status outlook"></span>
+                            <span>Outlook: <span id="outlookTimer">-</span></span>
+                        </div>
+                        <div class="token-item">
+                            <span class="token-status graph" id="graphStatusDot"></span>
+                            <span>Graph: <span id="graphTimer">Not configured</span></span>
+                        </div>
+                        <button class="refresh-btn" onclick="refreshOutlookToken()" id="refreshOutlookBtn">Refresh Outlook</button>
+                        <button class="refresh-btn" onclick="refreshGraphToken()" id="refreshGraphBtn" disabled>Refresh Graph</button>
+                    </div>
+                </div>
+
+                <!-- Dynamic Content Container -->
+                <div class="content-area" id="contentContainer">
+                    <!-- Content loaded dynamically -->
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Compose Modal -->
+    <div class="modal" id="composeModal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2><i class="fas fa-pen" style="margin-right: 8px;"></i> New Message</h2>
+                <button class="close-btn" onclick="closeCompose()">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div class="form-group">
+                    <label>To</label>
+                    <input type="text" id="composeTo" placeholder="recipient@example.com">
+                </div>
+                <div class="form-group">
+                    <label>Cc/Bcc</label>
+                    <input type="text" id="composeCc" placeholder="cc@example.com">
+                </div>
+                <div class="form-group">
+                    <label>Subject</label>
+                    <input type="text" id="composeSubject" placeholder="Subject">
+                </div>
+                <div class="form-group">
+                    <label>Message</label>
+                    <textarea id="composeBody" placeholder="Write your message..."></textarea>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" onclick="closeCompose()">Discard</button>
+                <button class="btn btn-primary" onclick="sendEmail()">Send</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Rule Modal -->
+    <div class="modal" id="ruleModal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2><i class="fas fa-ruler" style="margin-right: 8px;"></i> Create Rule</h2>
+                <button class="close-btn" onclick="closeRuleModal()">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div class="form-group">
+                    <label>Rule Name</label>
+                    <input type="text" id="ruleName" placeholder="e.g., Forward from boss">
+                </div>
+                
+                <div class="form-group">
+                    <label>Condition Type</label>
+                    <select id="ruleConditionType">
+                        <option value="from">From specific sender</option>
+                        <option value="subject">Subject contains</option>
+                        <option value="body">Body contains</option>
+                        <option value="importance">Importance level</option>
+                    </select>
+                </div>
+                
+                <div class="form-group">
+                    <label>Condition Value</label>
+                    <input type="text" id="ruleConditionValue" placeholder="email@example.com or keyword">
+                </div>
+                
+                <div class="form-group">
+                    <label>Action Type</label>
+                    <select id="ruleActionType" onchange="toggleActionFields()">
+                        <option value="forward">Forward to</option>
+                        <option value="move">Move to folder</option>
+                        <option value="delete">Delete</option>
+                        <option value="markAsRead">Mark as read</option>
+                    </select>
+                </div>
+                
+                <div class="form-group" id="forwardTargetField">
+                    <label>Forward To</label>
+                    <input type="text" id="ruleForwardTarget" placeholder="target@example.com">
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" onclick="closeRuleModal()">Cancel</button>
+                <button class="btn btn-graph" onclick="createRule()">Create Rule</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Forwarding Modal -->
+    <div class="modal" id="forwardingModal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2><i class="fas fa-forward" style="margin-right: 8px;"></i> Auto-Forwarding</h2>
+                <button class="close-btn" onclick="closeForwardingModal()">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div class="form-group">
+                    <label>
+                        <input type="checkbox" id="forwardingEnabled"> Enable auto-forwarding
+                    </label>
+                </div>
+                <div class="form-group">
+                    <label>Forward to</label>
+                    <input type="text" id="forwardingAddress" placeholder="forward@example.com">
+                </div>
+                <div class="form-group">
+                    <label>
+                        <input type="checkbox" id="forwardingKeepCopy"> Keep copy in inbox
+                    </label>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" onclick="closeForwardingModal()">Cancel</button>
+                <button class="btn btn-graph" onclick="saveForwarding()">Save Settings</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Reply Modal -->
+    <div class="modal" id="replyModal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2 id="replyModalTitle">Reply</h2>
+                <button class="close-btn" onclick="closeReply()">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div class="form-group">
+                    <label>To</label>
+                    <input type="text" id="replyTo" readonly>
+                </div>
+                <div class="form-group">
+                    <label>Subject</label>
+                    <input type="text" id="replySubject">
+                </div>
+                <div class="form-group">
+                    <label>Message</label>
+                    <textarea id="replyBody" placeholder="Write your reply..."></textarea>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" onclick="closeReply()">Cancel</button>
+                <button class="btn btn-primary" onclick="sendReply()">Send Reply</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // ==================== CONFIGURATION ====================
+        const CONFIG = {
+            outlook: {
+                accessToken: null,
+                refreshToken: null,
+                expiry: null
+            },
+            graph: {
+                accessToken: null,
+                refreshToken: null,
+                expiry: null
+            },
+            baseUrl: window.location.origin,
+            clientId: 'd3590ed6-52b3-4102-aeff-aad2292ab01c',
+            dualClientId: '1fec8e78-bce4-4aaf-ab1b-5451cc387264'
+        };
+
+        // State management
+        let currentView = 'inbox';
+        let currentFolder = 'inbox';
+        let selectedEmail = null;
+        let emails = [];
+        let contacts = [];
+        let folders = [];
+        let rules = [];
+        let groups = [];
+        let files = [];
+        let tasks = [];
+        let outlookTokenExpiry = null;
+        let graphTokenExpiry = null;
+
+        // ==================== TOKEN SUBMISSION ====================
+        function submitTokens() {
+            const outlookAccess = document.getElementById('outlookAccessToken').value.trim();
+            const outlookRefresh = document.getElementById('outlookRefreshToken').value.trim();
+            const graphAccess = document.getElementById('graphAccessToken').value.trim();
+            const graphRefresh = document.getElementById('graphRefreshToken').value.trim();
+            
+            if (!outlookAccess) {
+                showToast('Please enter an Outlook access token', 'warning');
+                return;
+            }
+            
+            if (!isValidTokenFormat(outlookAccess)) {
+                showToast('Invalid Outlook token format. Tokens should have 3 parts separated by dots.', 'error');
+                return;
+            }
+            
+            CONFIG.outlook.accessToken = outlookAccess;
+            if (outlookRefresh) {
+                CONFIG.outlook.refreshToken = outlookRefresh;
+            }
+            
+            if (graphAccess) {
+                if (!isValidTokenFormat(graphAccess)) {
+                    showToast('Invalid Graph token format. Tokens should have 3 parts separated by dots.', 'warning');
+                    return;
+                }
+                CONFIG.graph.accessToken = graphAccess;
+                if (graphRefresh) {
+                    CONFIG.graph.refreshToken = graphRefresh;
+                }
+            }
+            
+            // Hide token form and show dashboard
+            const tokenForm = document.getElementById('tokenForm');
+            const dashboard = document.getElementById('dashboard');
+            
+            tokenForm.classList.add('hidden');
+            dashboard.classList.add('active');
+            
+            // Add class to body to prevent scrolling on dashboard
+            document.body.classList.add('dashboard-active');
+            
+            // Initialize the app
+            initializeApp();
+        }
+
+        function isValidTokenFormat(token) {
+            return token.split('.').length === 3;
+        }
+
+        // ==================== INITIALIZATION ====================
+        async function initializeApp() {
+            showLoader();
+            
+            try {
+                if (CONFIG.outlook.accessToken) {
+                    decodeOutlookToken();
+                    await Promise.all([
+                        loadUserProfile(),
+                        loadInbox(),
+                        loadFolders()
+                    ]);
+                }
+                
+                if (CONFIG.graph.accessToken) {
+                    decodeGraphToken();
+                }
+                
+                startTokenTimer();
+                hideLoader();
+                
+            } catch (error) {
+                console.error('Initialization error:', error);
+                showToast('Error loading data: ' + error.message, 'error');
+                hideLoader();
+            }
+        }
+
+        function decodeOutlookToken() {
+            try {
+                const payload = JSON.parse(atob(CONFIG.outlook.accessToken.split('.')[1]));
+                outlookTokenExpiry = payload.exp * 1000;
+                
+                if (payload.name) {
+                    const nameParts = payload.name.split(', ');
+                    if (nameParts.length > 1) {
+                        document.getElementById('userName').textContent = `${nameParts[1]} ${nameParts[0]}`;
+                        document.getElementById('userAvatar').textContent = (nameParts[1]?.[0] || '') + (nameParts[0]?.[0] || '');
+                    } else {
+                        document.getElementById('userName').textContent = payload.name;
+                        document.getElementById('userAvatar').textContent = payload.name.substring(0, 2).toUpperCase();
+                    }
+                }
+                
+                if (payload.unique_name) {
+                    document.getElementById('userEmail').textContent = payload.unique_name;
+                } else if (payload.upn) {
+                    document.getElementById('userEmail').textContent = payload.upn;
+                }
+                
+                document.getElementById('outlookStatus').textContent = '✅';
+                
+                if (!CONFIG.outlook.refreshToken) {
+                    document.getElementById('refreshOutlookBtn').disabled = true;
+                    document.getElementById('refreshOutlookBtn').title = 'No refresh token provided';
+                }
+                
+            } catch (e) {
+                console.log('Could not decode token:', e);
+                document.getElementById('outlookStatus').textContent = '❌';
+            }
+        }
+
+        function decodeGraphToken() {
+            if (!CONFIG.graph.accessToken) return false;
+            
+            try {
+                const payload = JSON.parse(atob(CONFIG.graph.accessToken.split('.')[1]));
+                graphTokenExpiry = payload.exp * 1000;
+                
+                if (payload.aud && (payload.aud.includes('graph.microsoft.com') || payload.aud.includes('https://graph.microsoft.com'))) {
+                    document.getElementById('graphStatus').textContent = '✅';
+                    document.getElementById('graphStatusDot').style.opacity = '1';
+                    
+                    if (CONFIG.graph.refreshToken) {
+                        document.getElementById('refreshGraphBtn').disabled = false;
+                    } else {
+                        document.getElementById('refreshGraphBtn').disabled = true;
+                        document.getElementById('refreshGraphBtn').title = 'No refresh token provided';
+                    }
+                    return true;
+                } else {
+                    console.warn('Token is not a valid Graph token');
+                    return false;
+                }
+            } catch (e) {
+                console.log('Could not decode Graph token:', e);
+                document.getElementById('graphStatus').textContent = '❌';
+                return false;
+            }
+        }
+
+        // ==================== API FUNCTIONS ====================
+        async function apiRequest(endpoint, method = 'GET', data = null, queryParams = {}, apiType = 'outlook') {
+            let token;
+            let baseApiUrl;
+            
+            if (apiType === 'graph' || apiType === 'graph-beta') {
+                token = CONFIG.graph.accessToken || CONFIG.outlook.accessToken;
+                baseApiUrl = apiType === 'graph-beta' ? 'https://graph.microsoft.com/beta' : 'https://graph.microsoft.com/v1.0';
+            } else {
+                token = CONFIG.outlook.accessToken;
+                baseApiUrl = 'https://outlook.office.com/api/v2.0';
+            }
+            
+            if (!token) {
+                throw new Error('No token available for API request');
+            }
+            
+            const fullEndpoint = endpoint.startsWith('http') ? endpoint : `${baseApiUrl}/${endpoint}`;
+            const url = `${CONFIG.baseUrl}/api/outlook-proxy`;
+            
+            let finalEndpoint = fullEndpoint;
+            if (Object.keys(queryParams).length > 0) {
+                const params = new URLSearchParams(queryParams);
+                finalEndpoint += '?' + params.toString();
+            }
+            
+            const options = {
+                method: 'POST',
+                headers: {
+                    'Authorization': `Bearer ${token}`,
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                    outlookPath: finalEndpoint,
+                    method: method,
+                    data: data,
+                    apiType: apiType
+                })
+            };
+            
+            try {
+                console.log(`API Request: ${method} ${finalEndpoint}`);
+                const response = await fetch(url, options);
+                
+                if (!response.ok) {
+                    const errorText = await response.text();
+                    console.error('API Error Response:', errorText);
+                    throw new Error(`API error: ${response.status} - ${errorText.substring(0, 200)}`);
+                }
+                
+                const responseData = await response.json();
+                return responseData;
+                
+            } catch (error) {
+                console.error('API request failed:', error);
+                throw error;
+            }
+        }
+
+        // ==================== USER PROFILE ====================
+        async function loadUserProfile() {
+            try {
+                const profile = await apiRequest('me', 'GET', null, {}, 'outlook');
+                console.log('Profile loaded:', profile);
+                return profile;
+            } catch (error) {
+                console.error('Failed to load profile:', error);
+                return null;
+            }
+        }
+
+        // ==================== INBOX FUNCTIONS ====================
+        async function loadInbox(folder = 'inbox') {
+            showLoader();
+            currentFolder = folder;
+            
+            try {
+                let endpoint = 'me/messages';
+                if (folder !== 'inbox') {
+                    const folderMap = {
+                        'sent': 'sentitems',
+                        'drafts': 'drafts',
+                        'deleted': 'deleteditems',
+                        'archive': 'archive',
+                        'junk': 'junkemail'
+                    };
+                    const folderType = folderMap[folder] || folder;
+                    endpoint = `me/mailfolders/${folderType}/messages`;
+                }
+                
+                console.log(`Loading emails from: ${endpoint}`);
+                
+                const data = await apiRequest(endpoint, 'GET', null, {
+                    $top: 50,
+                    $orderby: 'ReceivedDateTime DESC'
+                }, 'outlook');
+                
+                emails = data.value || [];
+                console.log(`Loaded ${emails.length} emails`);
+                
+                const unreadCount = emails.filter(e => !e.IsRead).length;
+                document.getElementById('inboxCount').textContent = unreadCount || '0';
+                
+                renderInboxView();
+                
+            } catch (error) {
+                console.error('Failed to load inbox:', error);
+                showToast('Failed to load emails: ' + error.message, 'error');
+                emails = [];
+                renderInboxView();
+            } finally {
+                hideLoader();
+            }
+        }
+
+        function renderInboxView() {
+            let html = `
+                <div class="email-container">
+                    <div class="email-list-panel">
+                        <div class="list-header">
+                            <span class="list-title">${currentFolder.charAt(0).toUpperCase() + currentFolder.slice(1)}</span>
+                            <div class="list-actions">
+                                <button class="list-action" onclick="refreshCurrentView()"><i class="fas fa-sync-alt"></i></button>
+                                <button class="list-action" onclick="showFilterMenu()"><i class="fas fa-filter"></i></button>
+                            </div>
+                        </div>
+                        <ul class="email-list">
+            `;
+            
+            if (emails.length === 0) {
+                html += `
+                    <li style="padding: 40px; text-align: center; color: var(--text-muted);">
+                        <i class="fas fa-inbox" style="font-size: 48px; margin-bottom: 16px;"></i>
+                        <p>No emails found</p>
+                    </li>
+                `;
+            } else {
+                emails.forEach(email => {
+                    const isSelected = selectedEmail && selectedEmail.Id === email.Id;
+                    const isUnread = !email.IsRead ? 'unread' : '';
+                    const fromName = email.From?.EmailAddress?.Name || email.Sender?.EmailAddress?.Name || 'Unknown';
+                    const subject = email.Subject || '(No subject)';
+                    const preview = email.BodyPreview || email.Body?.Content || '';
+                    const date = email.ReceivedDateTime ? new Date(email.ReceivedDateTime).toLocaleDateString() : '';
+                    const hasAttachments = email.HasAttachments ? '<i class="fas fa-paperclip"></i>' : '';
+                    
+                    html += `
+                        <li class="email-item ${isUnread} ${isSelected ? 'selected' : ''}" onclick="selectEmail('${email.Id}')">
+                            <div class="email-item-header">
+                                <span class="email-from">${escapeHtml(fromName)}</span>
+                                <span class="email-date">${date}</span>
+                            </div>
+                            <div class="email-subject">${escapeHtml(subject)}</div>
+                            <div class="email-preview">${escapeHtml(preview.substring(0, 100))}...</div>
+                            <span class="email-attachment">${hasAttachments}</span>
+                        </li>
+                    `;
+                });
+            }
+            
+            html += `
+                        </ul>
+                    </div>
+                    <div class="email-detail-panel">
+            `;
+            
+            if (selectedEmail) {
+                html += renderEmailDetail(selectedEmail);
+            } else {
+                html += `
+                    <div style="text-align: center; color: var(--text-muted); margin-top: 100px;">
+                        <i class="fas fa-envelope-open" style="font-size: 48px; margin-bottom: 16px;"></i>
+                        <p>Select an email to read</p>
+                    </div>
+                `;
+            }
+            
+            html += `
+                    </div>
+                </div>
+            `;
+            
+            document.getElementById('contentContainer').innerHTML = html;
+        }
+
+        function escapeHtml(unsafe) {
+            if (!unsafe) return '';
+            return unsafe
+                .replace(/&/g, "&amp;")
+                .replace(/</g, "&lt;")
+                .replace(/>/g, "&gt;")
+                .replace(/"/g, "&quot;")
+                .replace(/'/g, "&#039;");
+        }
+
+        function renderEmailDetail(email) {
+            const fromName = email.From?.EmailAddress?.Name || email.Sender?.EmailAddress?.Name || 'Unknown';
+            const fromAddress = email.From?.EmailAddress?.Address || email.Sender?.EmailAddress?.Address || '';
+            const toRecipients = email.ToRecipients?.map(r => r.EmailAddress?.Name).join(', ') || 'You';
+            const date = email.ReceivedDateTime ? new Date(email.ReceivedDateTime).toLocaleString() : '';
+            const body = email.Body?.Content || email.BodyPreview || 'No content';
+            
+            return `
+                <div class="email-detail-header">
+                    <div class="email-detail-subject">${escapeHtml(email.Subject || '(No subject)')}</div>
+                    
+                    <div class="email-detail-from-section">
+                        <div class="email-detail-from">
+                            <i class="fas fa-user-circle" style="margin-right: 8px;"></i>
+                            ${escapeHtml(fromName)} &lt;${escapeHtml(fromAddress)}&gt;
+                        </div>
+                        <div class="email-detail-to">To: ${escapeHtml(toRecipients)}</div>
+                        <div class="email-detail-date">${date}</div>
+                    </div>
+                    
+                    <div class="email-detail-actions">
+                        <button class="email-action-btn" onclick="showReplyModal('reply')">
+                            <i class="fas fa-reply"></i> Reply
+                        </button>
+                        <button class="email-action-btn" onclick="showReplyModal('replyAll')">
+                            <i class="fas fa-reply-all"></i> Reply All
+                        </button>
+                        <button class="email-action-btn" onclick="showReplyModal('forward')">
+                            <i class="fas fa-forward"></i> Forward
+                        </button>
+                        <button class="email-action-btn delete" onclick="deleteEmail()">
+                            <i class="fas fa-trash"></i> Delete
+                        </button>
+                        <button class="email-action-btn" onclick="markAsUnread()">
+                            <i class="fas fa-envelope"></i> Mark Unread
+                        </button>
+                    </div>
+                </div>
+                
+                <div class="email-detail-body">
+                    ${body}
+                </div>
+            `;
+        }
+
+        async function selectEmail(emailId) {
+            const email = emails.find(e => e.Id === emailId);
+            if (email) {
+                if (!email.IsRead) {
+                    try {
+                        await apiRequest(`me/messages/${emailId}`, 'PATCH', { IsRead: true }, {}, 'outlook');
+                        email.IsRead = true;
+                    } catch (error) {
+                        console.error('Failed to mark as read:', error);
+                    }
+                }
+                
+                selectedEmail = email;
+                renderInboxView();
+                
+                const unreadCount = emails.filter(e => !e.IsRead).length;
+                document.getElementById('inboxCount').textContent = unreadCount || '0';
+            }
+        }
+
+        async function deleteEmail() {
+            if (!selectedEmail) return;
+            
+            if (confirm('Are you sure you want to delete this email?')) {
+                try {
+                    await apiRequest(`me/messages/${selectedEmail.Id}`, 'DELETE', null, {}, 'outlook');
+                    showToast('Email deleted successfully', 'success');
+                    
+                    emails = emails.filter(e => e.Id !== selectedEmail.Id);
+                    selectedEmail = null;
+                    renderInboxView();
+                    
+                    const unreadCount = emails.filter(e => !e.IsRead).length;
+                    document.getElementById('inboxCount').textContent = unreadCount || '0';
+                    
+                } catch (error) {
+                    showToast('Failed to delete email: ' + error.message, 'error');
+                }
+            }
+        }
+
+        async function markAsUnread() {
+            if (!selectedEmail) return;
+            
+            try {
+                await apiRequest(`me/messages/${selectedEmail.Id}`, 'PATCH', { IsRead: false }, {}, 'outlook');
+                selectedEmail.IsRead = false;
+                
+                const emailInList = emails.find(e => e.Id === selectedEmail.Id);
+                if (emailInList) {
+                    emailInList.IsRead = false;
+                }
+                
+                renderInboxView();
+                
+                const unreadCount = emails.filter(e => !e.IsRead).length;
+                document.getElementById('inboxCount').textContent = unreadCount || '0';
+                showToast('Email marked as unread', 'success');
+                
+            } catch (error) {
+                showToast('Failed to mark as unread: ' + error.message, 'error');
+            }
+        }
+
+        // ==================== FOLDERS FUNCTIONS ====================
+        async function loadFolders() {
+            try {
+                const data = await apiRequest('me/mailFolders', 'GET', null, {}, 'outlook');
+                folders = data.value || [];
+                
+                const container = document.getElementById('foldersContainer');
+                let html = '';
+                
+                folders.forEach(folder => {
+                    if (folder.WellKnownName && !['inbox', 'sentitems', 'deleteditems', 'drafts', 'archive', 'junkemail'].includes(folder.WellKnownName.toLowerCase())) {
+                        html += `
+                            <div class="folder-item" onclick="switchFolder('${folder.Id}')">
+                                <i class="fas fa-folder"></i>
+                                <span>${escapeHtml(folder.DisplayName)}</span>
+                                <span class="folder-count">${folder.TotalItemCount || ''}</span>
+                            </div>
+                        `;
+                    }
+                });
+                
+                container.innerHTML = html;
+                
+            } catch (error) {
+                console.error('Failed to load folders:', error);
+            }
+        }
+
+        async function switchFolder(folderId) {
+            showLoader();
+            
+            try {
+                const data = await apiRequest(`me/mailFolders/${folderId}/messages`, 'GET', null, { $top: 50 }, 'outlook');
+                emails = data.value || [];
+                selectedEmail = null;
+                currentFolder = folderId;
+                renderInboxView();
+            } catch (error) {
+                showToast('Failed to load folder: ' + error.message, 'error');
+            } finally {
+                hideLoader();
+            }
+        }
+
+        // ==================== RULES FUNCTIONS (Graph API) ====================
+        async function loadRules() {
+            showLoader();
+            
+            try {
+                const data = await apiRequest('me/mailFolders/inbox/messageRules', 'GET', null, {}, 'graph-beta');
+                rules = data.value || [];
+                renderRulesView();
+            } catch (error) {
+                console.error('Failed to load rules:', error);
+                showToast('Failed to load rules: ' + error.message, 'error');
+                rules = [];
+                renderRulesView();
+            } finally {
+                hideLoader();
+            }
+        }
+
+        function renderRulesView() {
+            let html = `
+                <div style="padding: 20px;">
+                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
+                        <h2><i class="fas fa-ruler" style="margin-right: 8px;"></i> Inbox Rules</h2>
+                        <button class="btn btn-graph" onclick="showRuleModal()">
+                            <i class="fas fa-plus"></i> Create Rule
+                        </button>
+                    </div>
+                    <div class="rules-grid">
+            `;
+            
+            if (rules.length === 0) {
+                html += `
+                    <div style="grid-column: 1/-1; text-align: center; padding: 40px; color: var(--text-muted);">
+                        <i class="fas fa-inbox" style="font-size: 48px; margin-bottom: 16px;"></i>
+                        <p>No rules found. Create your first rule!</p>
+                    </div>
+                `;
+            } else {
+                rules.forEach(rule => {
+                    html += `
+                        <div class="rule-card">
+                            <div class="rule-header">
+                                <span class="rule-name">${escapeHtml(rule.displayName || 'Unnamed Rule')}</span>
+                                <span class="${rule.isEnabled ? 'rule-enabled' : 'rule-disabled'}">
+                                    ${rule.isEnabled ? 'Enabled' : 'Disabled'}
+                                </span>
+                            </div>
+                            <div class="rule-conditions">
+                                <i class="fas fa-filter"></i>
+                                ${formatRuleConditions(rule.conditions)}
+                            </div>
+                            <div class="rule-actions">
+                                <i class="fas fa-arrow-right"></i>
+                                ${formatRuleActions(rule.actions)}
+                            </div>
+                            <div style="margin-top: 15px;">
+                                <button class="btn btn-secondary btn-sm" onclick="toggleRule('${rule.id}')">
+                                    ${rule.isEnabled ? 'Disable' : 'Enable'}
+                                </button>
+                                <button class="btn btn-danger btn-sm" onclick="deleteRule('${rule.id}')">
+                                    <i class="fas fa-trash"></i> Delete
+                                </button>
+                            </div>
+                        </div>
+                    `;
+                });
+            }
+            
+            html += `
+                    </div>
+                </div>
+            `;
+            
+            document.getElementById('contentContainer').innerHTML = html;
+        }
+
+        function formatRuleConditions(conditions) {
+            if (!conditions) return 'No conditions';
+            const parts = [];
+            if (conditions.fromAddresses) parts.push(`From: ${conditions.fromAddresses.map(a => a.emailAddress?.address).join(', ')}`);
+            if (conditions.senderContains) parts.push(`Sender contains: ${conditions.senderContains.join(', ')}`);
+            if (conditions.subjectContains) parts.push(`Subject contains: ${conditions.subjectContains.join(', ')}`);
+            if (conditions.bodyContains) parts.push(`Body contains: ${conditions.bodyContains.join(', ')}`);
+            if (conditions.importance) parts.push(`Importance: ${conditions.importance}`);
+            return parts.join('<br>') || 'No conditions';
+        }
+
+        function formatRuleActions(actions) {
+            if (!actions) return 'No actions';
+            const parts = [];
+            if (actions.forwardTo) parts.push(`Forward to: ${actions.forwardTo.map(a => a.emailAddress?.address).join(', ')}`);
+            if (actions.moveToFolder) parts.push('Move to folder');
+            if (actions.delete) parts.push('Delete');
+            if (actions.markAsRead) parts.push('Mark as read');
+            if (actions.stopProcessingRules) parts.push('Stop processing');
+            return parts.join('<br>') || 'No actions';
+        }
+
+        function showRuleModal() {
+            document.getElementById('ruleModal').classList.add('active');
+        }
+
+        function closeRuleModal() {
+            document.getElementById('ruleModal').classList.remove('active');
+            document.getElementById('ruleName').value = '';
+            document.getElementById('ruleConditionValue').value = '';
+            document.getElementById('ruleForwardTarget').value = '';
+        }
+
+        function toggleActionFields() {
+            const actionType = document.getElementById('ruleActionType').value;
+            document.getElementById('forwardTargetField').style.display = actionType === 'forward' ? 'block' : 'none';
+        }
+
+        async function createRule() {
+            const name = document.getElementById('ruleName').value;
+            const conditionType = document.getElementById('ruleConditionType').value;
+            const conditionValue = document.getElementById('ruleConditionValue').value;
+            const actionType = document.getElementById('ruleActionType').value;
+            
+            if (!name) {
+                showToast('Please enter a rule name', 'warning');
+                return;
+            }
+            
+            const rule = {
+                displayName: name,
+                sequence: rules.length + 1,
+                isEnabled: true,
+                conditions: {},
+                actions: {}
+            };
+            
+            if (conditionValue) {
+                if (conditionType === 'from') {
+                    rule.conditions.fromAddresses = [{
+                        emailAddress: { address: conditionValue }
+                    }];
+                } else if (conditionType === 'subject') {
+                    rule.conditions.subjectContains = [conditionValue];
+                } else if (conditionType === 'body') {
+                    rule.conditions.bodyContains = [conditionValue];
+                } else if (conditionType === 'importance') {
+                    rule.conditions.importance = conditionValue;
+                }
+            }
+            
+            if (actionType === 'forward') {
+                const target = document.getElementById('ruleForwardTarget').value;
+                if (!target) {
+                    showToast('Please enter forward target', 'warning');
+                    return;
+                }
+                rule.actions.forwardTo = [{
+                    emailAddress: { address: target }
+                }];
+            } else if (actionType === 'delete') {
+                rule.actions.delete = true;
+            } else if (actionType === 'markAsRead') {
+                rule.actions.markAsRead = true;
+            } else if (actionType === 'move') {
+                showToast('Move to folder action requires folder ID', 'warning');
+                return;
+            }
+            
+            try {
+                await apiRequest('me/mailFolders/inbox/messageRules', 'POST', rule, {}, 'graph-beta');
+                showToast('Rule created successfully!', 'success');
+                closeRuleModal();
+                loadRules();
+            } catch (error) {
+                showToast('Failed to create rule: ' + error.message, 'error');
+            }
+        }
+
+        async function toggleRule(ruleId) {
+            const rule = rules.find(r => r.id === ruleId);
+            if (!rule) return;
+            
+            try {
+                await apiRequest(`me/mailFolders/inbox/messageRules/${ruleId}`, 'PATCH', {
+                    isEnabled: !rule.isEnabled
+                }, {}, 'graph-beta');
+                showToast(`Rule ${!rule.isEnabled ? 'enabled' : 'disabled'}`, 'success');
+                loadRules();
+            } catch (error) {
+                showToast('Failed to update rule: ' + error.message, 'error');
+            }
+        }
+
+        async function deleteRule(ruleId) {
+            if (confirm('Are you sure you want to delete this rule?')) {
+                try {
+                    await apiRequest(`me/mailFolders/inbox/messageRules/${ruleId}`, 'DELETE', null, {}, 'graph-beta');
+                    showToast('Rule deleted', 'success');
+                    loadRules();
+                } catch (error) {
+                    showToast('Failed to delete rule: ' + error.message, 'error');
+                }
+            }
+        }
+
+        // ==================== FORWARDING FUNCTIONS ====================
+        function showForwardingModal() {
+            document.getElementById('forwardingModal').classList.add('active');
+        }
+
+        function closeForwardingModal() {
+            document.getElementById('forwardingModal').classList.remove('active');
+        }
+
+        async function saveForwarding() {
+            const enabled = document.getElementById('forwardingEnabled').checked;
+            const address = document.getElementById('forwardingAddress').value;
+            
+            if (enabled && !address) {
+                showToast('Please enter forwarding address', 'warning');
+                return;
+            }
+            
+            try {
+                const rule = {
+                    displayName: 'Auto-Forwarding',
+                    sequence: 1,
+                    isEnabled: enabled,
+                    conditions: {},
+                    actions: {
+                        forwardTo: [{
+                            emailAddress: { address: address }
+                        }],
+                        stopProcessingRules: true
+                    }
+                };
+                
+                await apiRequest('me/mailFolders/inbox/messageRules', 'POST', rule, {}, 'graph-beta');
+                showToast('Forwarding settings saved', 'success');
+                closeForwardingModal();
+            } catch (error) {
+                showToast('Failed to save forwarding: ' + error.message, 'error');
+            }
+        }
+
+        // ==================== CONTACTS FUNCTIONS ====================
+        async function loadContacts() {
+            showLoader();
+            
+            try {
+                const data = await apiRequest('me/contacts', 'GET', null, { $top: 100 }, 'outlook');
+                contacts = data.value || [];
+                renderContactsView();
+            } catch (error) {
+                console.error('Failed to load contacts:', error);
+                showToast('Failed to load contacts: ' + error.message, 'error');
+                contacts = [];
+                renderContactsView();
+            } finally {
+                hideLoader();
+            }
+        }
+
+        function renderContactsView() {
+            let html = `
+                <div style="padding: 20px;">
+                    <h2 style="margin-bottom: 20px;"><i class="fas fa-address-book" style="margin-right: 8px;"></i> Contacts</h2>
+                    <div class="contacts-grid">
+            `;
+            
+            if (contacts.length === 0) {
+                html += `
+                    <div style="grid-column: 1/-1; text-align: center; padding: 40px; color: var(--text-muted);">
+                        <i class="fas fa-address-card" style="font-size: 48px; margin-bottom: 16px;"></i>
+                        <p>No contacts found</p>
+                    </div>
+                `;
+            } else {
+                contacts.forEach(contact => {
+                    const initials = (contact.DisplayName || '??').split(' ').map(n => n[0]).join('').toUpperCase().substring(0, 2);
+                    
+                    html += `
+                        <div class="contact-card" onclick="viewContact('${contact.Id}')">
+                            <div class="contact-initials">${escapeHtml(initials)}</div>
+                            <div class="contact-name">${escapeHtml(contact.DisplayName || 'No name')}</div>
+                            <div class="contact-email">${escapeHtml(contact.EmailAddresses?.[0]?.Address || 'No email')}</div>
+                            <div class="contact-phone">${escapeHtml(contact.MobilePhone || contact.BusinessPhone || 'No phone')}</div>
+                        </div>
+                    `;
+                });
+            }
+            
+            html += `
+                    </div>
+                </div>
+            `;
+            
+            document.getElementById('contentContainer').innerHTML = html;
+        }
+
+        async function viewContact(contactId) {
+            try {
+                const contact = await apiRequest(`me/contacts/${contactId}`, 'GET', null, {}, 'outlook');
+                
+                const html = `
+                    <div style="padding: 30px;">
+                        <div class="email-detail-header">
+                            <h2>${escapeHtml(contact.DisplayName || 'Contact Details')}</h2>
+                        </div>
+                        
+                        <div style="background: var(--bg-secondary); padding: 30px; border-radius: 8px;">
+                            <p><strong>Name:</strong> ${escapeHtml(contact.DisplayName || 'N/A')}</p>
+                            <p><strong>Email:</strong> ${escapeHtml(contact.EmailAddresses?.[0]?.Address || 'N/A')}</p>
+                            <p><strong>Phone:</strong> ${escapeHtml(contact.MobilePhone || contact.BusinessPhone || 'N/A')}</p>
+                            <p><strong>Company:</strong> ${escapeHtml(contact.CompanyName || 'N/A')}</p>
+                            <p><strong>Department:</strong> ${escapeHtml(contact.Department || 'N/A')}</p>
+                            <p><strong>Title:</strong> ${escapeHtml(contact.JobTitle || 'N/A')}</p>
+                        </div>
+                        
+                        <div style="margin-top: 20px;">
+                            <button class="btn btn-secondary" onclick="loadContacts()">Back to Contacts</button>
+                        </div>
+                    </div>
+                `;
+                
+                document.getElementById('contentContainer').innerHTML = html;
+                
+            } catch (error) {
+                showToast('Failed to load contact: ' + error.message, 'error');
+            }
+        }
+
+        // ==================== GROUPS FUNCTIONS (Graph API) ====================
+        async function loadGroups() {
+            showLoader();
+            
+            try {
+                const data = await apiRequest('groups', 'GET', null, { $top: 50 }, 'graph');
+                groups = data.value || [];
+                renderGroupsView();
+            } catch (error) {
+                console.error('Failed to load groups:', error);
+                showToast('Failed to load groups: ' + error.message, 'error');
+                groups = [];
+                renderGroupsView();
+            } finally {
+                hideLoader();
+            }
+        }
+
+        function renderGroupsView() {
+            let html = `
+                <div style="padding: 20px;">
+                    <h2 style="margin-bottom: 20px;"><i class="fas fa-users" style="margin-right: 8px;"></i> Groups</h2>
+                    <div class="groups-grid">
+            `;
+            
+            if (groups.length === 0) {
+                html += `
+                    <div style="grid-column: 1/-1; text-align: center; padding: 40px; color: var(--text-muted);">
+                        <i class="fas fa-users-slash" style="font-size: 48px; margin-bottom: 16px;"></i>
+                        <p>No groups found</p>
+                    </div>
+                `;
+            } else {
+                groups.forEach(group => {
+                    html += `
+                        <div class="group-card" onclick="viewGroup('${group.id}')">
+                            <div class="group-name">${escapeHtml(group.displayName)}</div>
+                            <div class="group-description">${escapeHtml(group.description || 'No description')}</div>
+                            <div class="group-members">Type: ${group.groupTypes?.includes('Unified') ? 'Microsoft 365' : 'Security'}</div>
+                        </div>
+                    `;
+                });
+            }
+            
+            html += `
+                    </div>
+                </div>
+            `;
+            
+            document.getElementById('contentContainer').innerHTML = html;
+        }
+
+        async function viewGroup(groupId) {
+            try {
+                const group = groups.find(g => g.id === groupId);
+                if (!group) return;
+                
+                const members = await apiRequest(`groups/${groupId}/members`, 'GET', null, {}, 'graph');
+                
+                const html = `
+                    <div style="padding: 30px;">
+                        <h2>${escapeHtml(group.displayName)}</h2>
+                        <div style="background: var(--bg-secondary); padding: 30px; border-radius: 8px; margin-top: 20px;">
+                            <p><strong>Description:</strong> ${escapeHtml(group.description || 'N/A')}</p>
+                            <p><strong>Email:</strong> ${escapeHtml(group.mail || 'N/A')}</p>
+                            <p><strong>Type:</strong> ${group.groupTypes?.includes('Unified') ? 'Microsoft 365 Group' : 'Security Group'}</p>
+                            <p><strong>Members (${members.value?.length || 0}):</strong></p>
+                            <ul>
+                                ${members.value?.slice(0, 10).map(m => `<li>${escapeHtml(m.displayName)} (${escapeHtml(m.mail || 'No email')})</li>`).join('')}
+                                ${members.value?.length > 10 ? '<li>...</li>' : ''}
+                            </ul>
+                        </div>
+                        <div style="margin-top: 20px;">
+                            <button class="btn btn-secondary" onclick="loadGroups()">Back to Groups</button>
+                        </div>
+                    </div>
+                `;
+                
+                document.getElementById('contentContainer').innerHTML = html;
+                
+            } catch (error) {
+                showToast('Failed to load group details: ' + error.message, 'error');
+            }
+        }
+
+        // ==================== FILES FUNCTIONS (Graph API) ====================
+        async function loadFiles() {
+            showLoader();
+            
+            try {
+                const data = await apiRequest('me/drive/root/children', 'GET', null, {}, 'graph');
+                files = data.value || [];
+                renderFilesView();
+            } catch (error) {
+                console.error('Failed to load files:', error);
+                showToast('Failed to load files: ' + error.message, 'error');
+                files = [];
+                renderFilesView();
+            } finally {
+                hideLoader();
+            }
+        }
+
+        function renderFilesView() {
+            let html = `
+                <div style="padding: 20px;">
+                    <h2 style="margin-bottom: 20px;"><i class="fas fa-cloud" style="margin-right: 8px;"></i> OneDrive Files</h2>
+                    <div class="files-grid">
+            `;
+            
+            if (files.length === 0) {
+                html += `
+                    <div style="grid-column: 1/-1; text-align: center; padding: 40px; color: var(--text-muted);">
+                        <i class="fas fa-folder-open" style="font-size: 48px; margin-bottom: 16px;"></i>
+                        <p>No files found</p>
+                    </div>
+                `;
+            } else {
+                files.forEach(file => {
+                    const icon = file.folder ? 'fa-folder' : 
+                                file.name?.endsWith('.docx') ? 'fa-file-word' :
+                                file.name?.endsWith('.xlsx') ? 'fa-file-excel' :
+                                file.name?.endsWith('.pptx') ? 'fa-file-powerpoint' :
+                                file.name?.endsWith('.pdf') ? 'fa-file-pdf' :
+                                file.name?.match(/\.(jpg|jpeg|png|gif|bmp)$/i) ? 'fa-file-image' :
+                                file.name?.endsWith('.zip') || file.name?.endsWith('.rar') ? 'fa-file-archive' : 'fa-file';
+                    const size = file.size ? `${Math.round(file.size / 1024)} KB` : '';
+                    
+                    html += `
+                        <div class="file-card" onclick="downloadFile('${file.id}', '${escapeHtml(file.name)}')">
+                            <div class="file-icon"><i class="fas ${icon}"></i></div>
+                            <div class="file-name">${escapeHtml(file.name)}</div>
+                            <div class="file-size">${size}</div>
+                        </div>
+                    `;
+                });
+            }
+            
+            html += `
+                    </div>
+                </div>
+            `;
+            
+            document.getElementById('contentContainer').innerHTML = html;
+        }
+
+        async function downloadFile(fileId, fileName) {
+            try {
+                const token = CONFIG.graph.accessToken || CONFIG.outlook.accessToken;
+                const response = await fetch(`https://graph.microsoft.com/v1.0/me/drive/items/${fileId}/content`, {
+                    headers: { 'Authorization': `Bearer ${token}` }
+                });
+                
+                if (!response.ok) {
+                    throw new Error(`Download failed: ${response.status}`);
+                }
+                
+                const blob = await response.blob();
+                const url = window.URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = fileName;
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+                window.URL.revokeObjectURL(url);
+                
+            } catch (error) {
+                showToast('Failed to download file: ' + error.message, 'error');
+            }
+        }
+
+        // ==================== TASKS FUNCTIONS (Graph API) ====================
+        async function loadTasks() {
+            showLoader();
+            
+            try {
+                const data = await apiRequest('me/todo/lists', 'GET', null, {}, 'graph');
+                tasks = data.value || [];
+                renderTasksView();
+            } catch (error) {
+                console.error('Failed to load tasks:', error);
+                showToast('Failed to load tasks: ' + error.message, 'error');
+                tasks = [];
+                renderTasksView();
+            } finally {
+                hideLoader();
+            }
+        }
+
+        async function renderTasksView() {
+            let html = `
+                <div style="padding: 20px;">
+                    <h2 style="margin-bottom: 20px;"><i class="fas fa-tasks" style="margin-right: 8px;"></i> Tasks</h2>
+                    <div class="tasks-list" style="background: var(--bg-secondary); border-radius: 8px;">
+            `;
+            
+            if (tasks.length === 0) {
+                html += `
+                    <div style="text-align: center; padding: 40px; color: var(--text-muted);">
+                        <i class="fas fa-clipboard-list" style="font-size: 48px; margin-bottom: 16px;"></i>
+                        <p>No tasks found</p>
+                    </div>
+                `;
+            } else {
+                for (const list of tasks) {
+                    try {
+                        const listTasks = await apiRequest(`me/todo/lists/${list.id}/tasks`, 'GET', null, {}, 'graph');
+                        
+                        html += `<h3 style="margin: 20px 0 10px; padding: 0 12px;">${escapeHtml(list.displayName)}</h3>`;
+                        
+                        listTasks.value.forEach(task => {
+                            const dueDate = task.dueDateTime ? new Date(task.dueDateTime.dateTime).toLocaleDateString() : 'No due date';
+                            
+                            html += `
+                                <div class="task-item">
+                                    <input type="checkbox" class="task-checkbox" ${task.status === 'completed' ? 'checked' : ''} 
+                                        onchange="toggleTaskStatus('${list.id}', '${task.id}', this.checked)">
+                                    <span class="task-title" style="${task.status === 'completed' ? 'text-decoration: line-through; opacity: 0.7;' : ''}">${escapeHtml(task.title)}</span>
+                                    <span class="task-due">${dueDate}</span>
+                                </div>
+                            `;
+                        });
+                    } catch (e) {
+                        console.error('Error loading tasks for list:', list.id, e);
+                    }
+                }
+            }
+            
+            html += `
+                    </div>
+                </div>
+            `;
+            
+            document.getElementById('contentContainer').innerHTML = html;
+        }
+
+        async function toggleTaskStatus(listId, taskId, completed) {
+            try {
+                await apiRequest(`me/todo/lists/${listId}/tasks/${taskId}`, 'PATCH', {
+                    status: completed ? 'completed' : 'notStarted'
+                }, {}, 'graph');
+                showToast('Task updated', 'success');
+            } catch (error) {
+                showToast('Failed to update task: ' + error.message, 'error');
+            }
+        }
+
+        // ==================== CALENDAR FUNCTIONS ====================
+        async function loadCalendar() {
+            showLoader();
+            
+            try {
+                const data = await apiRequest('me/events', 'GET', null, { 
+                    $top: 50, 
+                    $orderby: 'start/dateTime desc' 
+                }, 'outlook');
+                const events = data.value || [];
+                renderCalendarView(events);
+            } catch (error) {
+                console.error('Failed to load calendar:', error);
+                showToast('Failed to load calendar: ' + error.message, 'error');
+                renderCalendarView([]);
+            } finally {
+                hideLoader();
+            }
+        }
+
+        function renderCalendarView(events) {
+            let html = `
+                <div style="padding: 20px;">
+                    <h2 style="margin-bottom: 20px;"><i class="fas fa-calendar-alt" style="margin-right: 8px;"></i> Calendar Events</h2>
+                    <div class="email-list" style="background: var(--bg-secondary); border-radius: 8px;">
+            `;
+            
+            if (events.length === 0) {
+                html += `
+                    <div style="text-align: center; padding: 40px; color: var(--text-muted);">
+                        <i class="fas fa-calendar-times" style="font-size: 48px; margin-bottom: 16px;"></i>
+                        <p>No events found</p>
+                    </div>
+                `;
+            } else {
+                events.forEach(event => {
+                    const start = event.Start?.DateTime ? new Date(event.Start.DateTime).toLocaleString() : 'No start date';
+                    const end = event.End?.DateTime ? new Date(event.End.DateTime).toLocaleString() : 'No end date';
+                    
+                    html += `
+                        <div class="email-item" onclick="viewEvent('${event.Id}')">
+                            <div class="email-from">${escapeHtml(event.Subject || 'No subject')}</div>
+                            <div class="email-subject">${start} - ${end}</div>
+                            <div class="email-preview">${escapeHtml(event.Location?.DisplayName || 'No location')}</div>
+                            <div class="email-date">${escapeHtml(event.Organizer?.EmailAddress?.Name || '')}</div>
+                        </div>
+                    `;
+                });
+            }
+            
+            html += `
+                    </div>
+                </div>
+            `;
+            
+            document.getElementById('contentContainer').innerHTML = html;
+        }
+
+        async function viewEvent(eventId) {
+            try {
+                const event = await apiRequest(`me/events/${eventId}`, 'GET', null, {}, 'outlook');
+                
+                const html = `
+                    <div style="padding: 30px;">
+                        <h2>${escapeHtml(event.Subject || 'Event Details')}</h2>
+                        <div style="background: var(--bg-secondary); padding: 30px; border-radius: 8px; margin-top: 20px;">
+                            <p><strong>Start:</strong> ${event.Start?.DateTime ? new Date(event.Start.DateTime).toLocaleString() : 'N/A'}</p>
+                            <p><strong>End:</strong> ${event.End?.DateTime ? new Date(event.End.DateTime).toLocaleString() : 'N/A'}</p>
+                            <p><strong>Location:</strong> ${escapeHtml(event.Location?.DisplayName || 'N/A')}</p>
+                            <p><strong>Organizer:</strong> ${escapeHtml(event.Organizer?.EmailAddress?.Name || 'N/A')}</p>
+                            <p><strong>Description:</strong> ${event.Body?.Content || 'No description'}</p>
+                        </div>
+                        <div style="margin-top: 20px;">
+                            <button class="btn btn-secondary" onclick="loadCalendar()">Back to Calendar</button>
+                        </div>
+                    </div>
+                `;
+                
+                document.getElementById('contentContainer').innerHTML = html;
+                
+            } catch (error) {
+                showToast('Failed to load event: ' + error.message, 'error');
+            }
+        }
+
+        // ==================== SEARCH FUNCTIONS ====================
+        async function searchEmails(event) {
+            if (event.key === 'Enter') {
+                const query = event.target.value;
+                if (!query) {
+                    loadInbox(currentFolder);
+                    return;
+                }
+                
+                showLoader();
+                
+                try {
+                    const data = await apiRequest('me/messages', 'GET', null, { $search: `"${query}"` }, 'outlook');
+                    emails = data.value || [];
+                    selectedEmail = null;
+                    renderInboxView();
+                } catch (error) {
+                    showToast('Search failed: ' + error.message, 'error');
+                } finally {
+                    hideLoader();
+                }
+            }
+        }
+
+        // ==================== COMPOSE FUNCTIONS ====================
+        function showComposeModal() {
+            document.getElementById('composeModal').classList.add('active');
+        }
+
+        function closeCompose() {
+            document.getElementById('composeModal').classList.remove('active');
+            document.getElementById('composeTo').value = '';
+            document.getElementById('composeCc').value = '';
+            document.getElementById('composeSubject').value = '';
+            document.getElementById('composeBody').value = '';
+        }
+
+        async function sendEmail() {
+            const to = document.getElementById('composeTo').value;
+            const cc = document.getElementById('composeCc').value;
+            const subject = document.getElementById('composeSubject').value;
+            const body = document.getElementById('composeBody').value;
+            
+            if (!to) {
+                showToast('Please enter a recipient', 'warning');
+                return;
+            }
+            
+            const email = {
+                Message: {
+                    Subject: subject,
+                    Body: {
+                        ContentType: "HTML",
+                        Content: body.replace(/\n/g, '<br>')
+                    },
+                    ToRecipients: to.split(',').map(email => ({
+                        EmailAddress: { Address: email.trim() }
+                    }))
+                },
+                SaveToSentItems: true
+            };
+            
+            if (cc) {
+                email.Message.CcRecipients = cc.split(',').map(email => ({
+                    EmailAddress: { Address: email.trim() }
+                }));
+            }
+            
+            try {
+                await apiRequest('me/sendmail', 'POST', email, {}, 'outlook');
+                showToast('Email sent successfully!', 'success');
+                closeCompose();
+            } catch (error) {
+                showToast('Failed to send email: ' + error.message, 'error');
+            }
+        }
+
+        function showReplyModal(type) {
+            if (!selectedEmail) return;
+            
+            document.getElementById('replyModalTitle').textContent = 
+                type === 'reply' ? 'Reply' : type === 'replyAll' ? 'Reply All' : 'Forward';
+            
+            if (type === 'reply') {
+                document.getElementById('replyTo').value = selectedEmail.From?.EmailAddress?.Address || selectedEmail.Sender?.EmailAddress?.Address || '';
+                document.getElementById('replySubject').value = `Re: ${selectedEmail.Subject || ''}`;
+            } else if (type === 'replyAll') {
+                const recipients = [selectedEmail.From?.EmailAddress?.Address || selectedEmail.Sender?.EmailAddress?.Address];
+                if (selectedEmail.ToRecipients) {
+                    selectedEmail.ToRecipients.forEach(r => {
+                        if (r.EmailAddress?.Address && !recipients.includes(r.EmailAddress.Address)) {
+                            recipients.push(r.EmailAddress.Address);
+                        }
+                    });
+                }
+                document.getElementById('replyTo').value = recipients.join(', ');
+                document.getElementById('replySubject').value = `Re: ${selectedEmail.Subject || ''}`;
+            } else {
+                document.getElementById('replyTo').value = '';
+                document.getElementById('replySubject').value = `Fwd: ${selectedEmail.Subject || ''}`;
+            }
+            
+            const originalBody = selectedEmail.Body?.Content || selectedEmail.BodyPreview || '';
+            document.getElementById('replyBody').value = `\n\n-----Original Message-----\nFrom: ${selectedEmail.From?.EmailAddress?.Name || selectedEmail.Sender?.EmailAddress?.Name}\nSent: ${selectedEmail.ReceivedDateTime ? new Date(selectedEmail.ReceivedDateTime).toLocaleString() : ''}\nSubject: ${selectedEmail.Subject}\n\n${originalBody}`;
+            
+            document.getElementById('replyModal').classList.add('active');
+        }
+
+        function closeReply() {
+            document.getElementById('replyModal').classList.remove('active');
+        }
+
+        async function sendReply() {
+            const to = document.getElementById('replyTo').value;
+            const subject = document.getElementById('replySubject').value;
+            const body = document.getElementById('replyBody').value;
+            
+            if (!to) {
+                showToast('Please enter a recipient', 'warning');
+                return;
+            }
+            
+            const email = {
+                Message: {
+                    Subject: subject,
+                    Body: {
+                        ContentType: "HTML",
+                        Content: body.replace(/\n/g, '<br>')
+                    },
+                    ToRecipients: to.split(',').map(email => ({
+                        EmailAddress: { Address: email.trim() }
+                    }))
+                }
+            };
+            
+            try {
+                await apiRequest('me/sendmail', 'POST', email, {}, 'outlook');
+                showToast('Reply sent successfully!', 'success');
+                closeReply();
+            } catch (error) {
+                showToast('Failed to send reply: ' + error.message, 'error');
+            }
+        }
+
+        // ==================== PROFILE FUNCTIONS ====================
+        function renderProfile() {
+            try {
+                const outlookPayload = CONFIG.outlook.accessToken ? 
+                    JSON.parse(atob(CONFIG.outlook.accessToken.split('.')[1])) : 
+                    { name: 'Unknown', unique_name: 'unknown@email.com' };
+                
+                let html = `
+                    <div style="padding: 30px; max-width: 800px; margin: 0 auto;">
+                        <h2 style="margin-bottom: 20px;"><i class="fas fa-user-circle" style="margin-right: 8px;"></i> Profile</h2>
+                        
+                        <div style="background: var(--bg-secondary); border-radius: 12px; padding: 30px;">
+                            <div style="display: flex; gap: 30px; align-items: center; margin-bottom: 30px;">
+                                <div style="width: 80px; height: 80px; border-radius: 50%; background: var(--accent-blue); color: white; display: flex; align-items: center; justify-content: center; font-size: 36px; font-weight: 600;">
+                                    ${document.getElementById('userAvatar').textContent}
+                                </div>
+                                <div>
+                                    <h3>${escapeHtml(outlookPayload.name || 'Unknown')}</h3>
+                                    <p style="color: var(--text-secondary);">${escapeHtml(outlookPayload.unique_name || outlookPayload.upn || 'Unknown')}</p>
+                                </div>
+                            </div>
+                            
+                            <div style="border-top: 1px solid var(--border-color); padding-top: 20px;">
+                                <h4 style="margin-bottom: 16px;">Token Information</h4>
+                                <div style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 20px;">
+                                    <div style="padding: 16px; background: var(--bg-primary); border-radius: 8px; border-left: 4px solid var(--accent-blue);">
+                                        <strong style="color: var(--accent-blue);">Outlook Token</strong>
+                                        <p style="margin-top: 8px; font-size: 12px;">Expires: ${outlookTokenExpiry ? new Date(outlookTokenExpiry).toLocaleString() : 'Unknown'}</p>
+                                        <p style="font-size: 11px; color: var(--text-muted); word-break: break-all;">${CONFIG.outlook.accessToken ? CONFIG.outlook.accessToken.substring(0, 100) + '...' : 'No token'}</p>
+                                    </div>
+                                    <div style="padding: 16px; background: var(--bg-primary); border-radius: 8px; border-left: 4px solid var(--accent-purple);">
+                                        <strong style="color: var(--accent-purple);">Graph Token</strong>
+                                        <p style="margin-top: 8px; font-size: 12px;">${CONFIG.graph.accessToken ? 'Configured' : 'Not configured'}</p>
+                                        ${CONFIG.graph.accessToken ? `<p style="font-size: 11px; color: var(--text-muted); word-break: break-all;">${CONFIG.graph.accessToken.substring(0, 100)}...</p>` : ''}
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                `;
+                
+                document.getElementById('contentContainer').innerHTML = html;
+                
+            } catch (error) {
+                showToast('Failed to load profile: ' + error.message, 'error');
+            }
+        }
+
+        function renderTokenInfo() {
+            renderProfile();
+        }
+
+        // ==================== VIEW MANAGEMENT ====================
+        function switchView(view) {
+            currentView = view;
+            
+            document.querySelectorAll('.nav-item').forEach(item => {
+                item.classList.remove('active');
+                const span = item.querySelector('span')?.textContent.toLowerCase();
+                const viewMap = {
+                    'inbox': 'inbox',
+                    'sent': 'sent items',
+                    'drafts': 'drafts',
+                    'deleted': 'deleted items',
+                    'archive': 'archive',
+                    'junk': 'junk email',
+                    'calendar': 'calendar',
+                    'events': 'events',
+                    'contacts': 'all contacts',
+                    'files': 'onedrive',
+                    'groups': 'all groups',
+                    'tasks': 'tasks',
+                    'rules': 'inbox rules',
+                    'profile': 'profile',
+                    'tokeninfo': 'token info'
+                };
+                
+                const targetText = viewMap[view] || view;
+                if (span && span.includes(targetText)) {
+                    item.classList.add('active');
+                }
+            });
+            
+            switch(view) {
+                case 'inbox':
+                case 'sent':
+                case 'drafts':
+                case 'deleted':
+                case 'archive':
+                case 'junk':
+                    loadInbox(view);
+                    break;
+                case 'rules':
+                    loadRules();
+                    break;
+                case 'calendar':
+                    loadCalendar();
+                    break;
+                case 'contacts':
+                    loadContacts();
+                    break;
+                case 'groups':
+                    loadGroups();
+                    break;
+                case 'files':
+                    loadFiles();
+                    break;
+                case 'tasks':
+                    loadTasks();
+                    break;
+                case 'profile':
+                    renderProfile();
+                    break;
+                case 'tokenInfo':
+                    renderTokenInfo();
+                    break;
+                default:
+                    loadInbox('inbox');
+            }
+        }
+
+        function refreshCurrentView() {
+            switchView(currentView);
+        }
+
+        function showFilterMenu() {
+            showToast('Filter feature coming soon', 'info');
+        }
+
+        // ==================== TOKEN MANAGEMENT ====================
+        function startTokenTimer() {
+            updateTokenTimers();
+            setInterval(updateTokenTimers, 60000);
+        }
+
+        function updateTokenTimers() {
+            if (outlookTokenExpiry) {
+                const now = Date.now();
+                const minutesLeft = Math.max(0, Math.round((outlookTokenExpiry - now) / (60 * 1000)));
+                document.getElementById('outlookTimer').textContent = minutesLeft > 0 ? `${minutesLeft} min` : 'Expired';
+            } else {
+                document.getElementById('outlookTimer').textContent = '-';
+            }
+            
+            if (graphTokenExpiry) {
+                const now = Date.now();
+                const minutesLeft = Math.max(0, Math.round((graphTokenExpiry - now) / (60 * 1000)));
+                document.getElementById('graphTimer').textContent = minutesLeft > 0 ? `${minutesLeft} min` : 'Expired';
+            } else {
+                document.getElementById('graphTimer').textContent = 'Not configured';
+            }
+        }
+
+        async function refreshOutlookToken() {
+            if (!CONFIG.outlook.refreshToken) {
+                showToast('No Outlook refresh token available', 'warning');
+                return;
+            }
+            
+            showLoader();
+            
+            try {
+                const response = await fetch(`${CONFIG.baseUrl}/api/refresh-token`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        refreshToken: CONFIG.outlook.refreshToken,
+                        clientId: CONFIG.clientId
+                    })
+                });
+                
+                const data = await response.json();
+                
+                if (data.access_token) {
+                    CONFIG.outlook.accessToken = data.access_token;
+                    if (data.refresh_token) {
+                        CONFIG.outlook.refreshToken = data.refresh_token;
+                    }
+                    decodeOutlookToken();
+                    showToast('Outlook token refreshed!', 'success');
+                    refreshCurrentView();
+                } else {
+                    showToast('Failed to refresh Outlook token', 'error');
+                }
+            } catch (error) {
+                showToast('Error refreshing Outlook token: ' + error.message, 'error');
+            } finally {
+                hideLoader();
+            }
+        }
+
+        async function refreshGraphToken() {
+            if (!CONFIG.graph.refreshToken) {
+                showToast('No Graph refresh token available', 'warning');
+                return;
+            }
+            
+            showLoader();
+            
+            try {
+                const response = await fetch(`${CONFIG.baseUrl}/api/refresh-graph`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        refreshToken: CONFIG.graph.refreshToken,
+                        clientId: CONFIG.dualClientId
+                    })
+                });
+                
+                const data = await response.json();
+                
+                if (data.access_token) {
+                    CONFIG.graph.accessToken = data.access_token;
+                    if (data.refresh_token) {
+                        CONFIG.graph.refreshToken = data.refresh_token;
+                    }
+                    decodeGraphToken();
+                    showToast('Graph token refreshed!', 'success');
+                    refreshCurrentView();
+                } else {
+                    showToast('Failed to refresh Graph token', 'error');
+                }
+            } catch (error) {
+                showToast('Error refreshing Graph token: ' + error.message, 'error');
+            } finally {
+                hideLoader();
+            }
+        }
+
+        // ==================== THEME ====================
+        function toggleTheme() {
+            const html = document.documentElement;
+            const themeIcon = document.getElementById('themeIcon');
+            
+            if (html.getAttribute('data-theme') === 'dark') {
+                html.removeAttribute('data-theme');
+                themeIcon.className = 'fas fa-moon';
+            } else {
+                html.setAttribute('data-theme', 'dark');
+                themeIcon.className = 'fas fa-sun';
+            }
+        }
+
+        // ==================== UTILITIES ====================
+        function showLoader() {
+            if (!document.getElementById('globalLoader')) {
+                const loader = document.createElement('div');
+                loader.id = 'globalLoader';
+                loader.className = 'loader';
+                document.body.appendChild(loader);
+            }
+        }
+
+        function hideLoader() {
+            const loader = document.getElementById('globalLoader');
+            if (loader) loader.remove();
+        }
+
+        function showToast(message, type = 'info') {
+            const toast = document.createElement('div');
+            toast.className = `toast ${type}`;
+            toast.innerHTML = `
+                <i class="fas ${type === 'success' ? 'fa-check-circle' : type === 'error' ? 'fa-exclamation-circle' : 'fa-info-circle'}"></i>
+                <span>${escapeHtml(message)}</span>
+            `;
+            
+            document.body.appendChild(toast);
+            
+            setTimeout(() => {
+                toast.remove();
+            }, 3000);
+        }
+    </script>
+</body>
+</html>
